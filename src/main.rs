@@ -1,10 +1,11 @@
 use std::error::Error;
 
-use axum::{extract::State, response::Html, routing::get, Json, Router, Server};
+use axum::{extract::State, response::Html, routing::get, Json, Router};
 use bluest::{btuuid::bluetooth_uuid_from_u16, Adapter, Device, Uuid};
 use futures_lite::stream::StreamExt;
 use serde::Serialize;
 use tokio::sync::watch;
+use tokio::signal;
 
 const HRS_UUID: Uuid = bluetooth_uuid_from_u16(0x180D);
 const HRM_UUID: Uuid = bluetooth_uuid_from_u16(0x2A37);
@@ -38,6 +39,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .ok_or("Bluetooth adapter not found")?;
     adapter.wait_available().await?;
 
+    tokio::select! {
+        _ = signal::ctrl_c() => {
+            println!("Received shutdown signal, exiting...");
+        }
+        result = run_loop(adapter, tx) => {
+            if let Err(e) = result {
+                eprintln!("Loop error: {e}");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_loop(
+    adapter: Adapter,
+    tx: watch::Sender<HeartRateReading>,
+) -> Result<(), Box<dyn Error>> {
     loop {
         let device = {
             let connected_heart_rate_devices =
@@ -47,10 +66,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             } else {
                 println!("Starting scan");
                 let mut scan = adapter.discover_devices(&[HRS_UUID]).await?;
-
                 println!("Scan started");
                 let device = scan.next().await.unwrap()?;
-
                 println!("Found Device: [{}] {:?}", device, device.name_async().await);
                 device
             }
@@ -68,12 +85,10 @@ async fn run_server(rx: watch::Receiver<HeartRateReading>) -> Result<(), Box<dyn
         .route("/heart-rate", get(heart_rate))
         .with_state(AppState { rx });
 
-    let addr = "127.0.0.1:3030".parse()?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3030").await?;
     println!("Serving web UI at http://127.0.0.1:3030/");
 
-    Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await?;
+    axum::serve(listener, app).await?;
     Ok(())
 }
 
@@ -94,8 +109,21 @@ async fn index() -> Html<&'static str> {
     <h1>Mi Band Heart Rate</h1>
     <div class="label">Latest heart rate:</div>
     <div id="rate" class="value">--</div>
-    <div class="label">Sensor contact:</div>
-    <div id="contact">--</div>
+    <div id="sensor-contact-container" style="display: none;">
+        <div class="label">Sensor contact:</div>
+        <div id="contact">--</div>
+    </div>
+    <button id="show-settings-btn" onclick="showSettings()">Settings</button>
+    <div id="settings-panel" style="display: none; margin-top: 1rem; border: 1px solid #ccc; padding: 1rem; border-radius: 8px; max-width: 560px;">
+        <div>
+            <button id="toggle-contact-btn" onclick="toggleSensorContact()">Show Sensor Contact</button>
+        </div>
+
+        <h2 style="margin-top: 1.5rem;">Custom CSS</h2>
+        <textarea id="custom-css" rows="10" cols="50" placeholder="Enter your custom CSS here..."></textarea><br>
+        <button onclick="applyCSS()">Apply CSS</button>
+        <button onclick="hideSettings()">Close Settings</button>
+    </div>
 
     <script>
         async function fetchRate() {
@@ -111,6 +139,56 @@ async fn index() -> Html<&'static str> {
         }
         setInterval(fetchRate, 1000);
         fetchRate();
+
+        function applyCSS() {
+            const css = document.getElementById('custom-css').value;
+            let style = document.getElementById('custom-style');
+            if (!style) {
+                style = document.createElement('style');
+                style.id = 'custom-style';
+                document.head.appendChild(style);
+            }
+            style.textContent = css;
+            localStorage.setItem('customCSS', css);
+        }
+
+        function setSensorContactVisibility(visible) {
+            const container = document.getElementById('sensor-contact-container');
+            const button = document.getElementById('toggle-contact-btn');
+            container.style.display = visible ? 'block' : 'none';
+            button.textContent = visible ? 'Hide Sensor Contact' : 'Show Sensor Contact';
+            localStorage.setItem('showSensorContact', visible ? '1' : '0');
+        }
+
+        function toggleSensorContact() {
+            const visible = document.getElementById('sensor-contact-container').style.display !== 'block';
+            setSensorContactVisibility(visible);
+        }
+
+        function showSettings() {
+            document.getElementById('settings-panel').style.display = 'block';
+            document.getElementById('show-settings-btn').style.display = 'none';
+        }
+
+        function hideSettings() {
+            document.getElementById('settings-panel').style.display = 'none';
+            document.getElementById('show-settings-btn').style.display = 'inline-block';
+        }
+
+        window.onload = function() {
+            const showContact = localStorage.getItem('showSensorContact') === '1';
+            setSensorContactVisibility(showContact);
+
+            const css = localStorage.getItem('customCSS');
+            if (css) {
+                document.getElementById('custom-css').value = css;
+                applyCSS();
+            }
+
+            if (css || showContact) {
+                showSettings();
+            }
+        };
     </script>
 </body>
 </html>"#,
