@@ -1,8 +1,11 @@
-# MiBand Heart Rate Demo
 
-> For miband 4~7, checkout `miband-4-to-7` tag
->
-> 对于小米手环 4~7，请切换到 `miband-4-to-7` 标签
+## 免责声明 Disclaimer
+
+> 本项目 Fork 自 [Tnze/miband-heart-rate](https://github.com/Tnze/miband-heart-rate)，代码由 AI 编写。
+> 
+> This project is Forked from [Tnze/miband-heart-rate](https://github.com/Tnze/miband-heart-rate), code written by AI.
+
+# MiBand Heart Rate Demo
 
 A Demo of reading "Shear heart rate data" of Xiaomi Smart Band 10. Enable the option in official App is required.
 
@@ -12,7 +15,7 @@ A Demo of reading "Shear heart rate data" of Xiaomi Smart Band 10. Enable the op
 
 ## Supported Platform
 
-I use `bluest` crate. I copy its words below.
+use `bluest` crate. I copy its words below.
 
 > Bluest is a cross-platform Bluetooth Low Energy (BLE) library for Rust. It currently supports Windows (version 10 and later), MacOS/iOS, and Linux. Android support is planned.
 
@@ -27,6 +30,19 @@ So it supported:
 MiBand 10 小米手环 10
 
 Tested on MiBand10/NFC.
+
+## 功能特性
+
+- **实时心率显示**：使用 `print!` + `flush()` 实现同一行实时刷新，无滚屏
+- **Web 界面**：浏览器中实时显示心率数据和传感器接触状态
+- **自定义样式**：支持在 Web 界面中注入自定义 CSS
+- **跨平台支持**：Windows、macOS/iOS、Linux 均可运行
+
+### 访问 Web 界面
+
+在浏览器中打开：`http://127.0.0.1:3030`
+
+实时查看心率数据和传感器状态。
 
 ## Screenshot
 

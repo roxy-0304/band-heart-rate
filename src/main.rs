@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::io::Write;
 
 use axum::{extract::State, response::Html, routing::get, Json, Router};
 use bluest::{btuuid::bluetooth_uuid_from_u16, Adapter, Device, Uuid};
@@ -30,7 +31,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tokio::spawn(async move {
         if let Err(err) = run_server(rx).await {
-            eprintln!("Web server error: {err}");
+            eprint!("\nWeb server error: {err}\n");
+            std::io::stderr().flush().unwrap();
         }
     });
 
@@ -41,11 +43,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tokio::select! {
         _ = signal::ctrl_c() => {
-            println!("Received shutdown signal, exiting...");
+            print!("Received shutdown signal, exiting...\n");
+            std::io::stdout().flush().unwrap();
         }
         result = run_loop(adapter, tx) => {
             if let Err(e) = result {
-                eprintln!("Loop error: {e}");
+                eprint!("\nLoop error: {e}\n");
+                std::io::stderr().flush().unwrap();
             }
         }
     }
@@ -64,17 +68,21 @@ async fn run_loop(
             if let Some(device) = connected_heart_rate_devices.into_iter().next() {
                 device
             } else {
-                println!("Starting scan");
+                print!("Starting scan\n");
+                std::io::stdout().flush().unwrap();
                 let mut scan = adapter.discover_devices(&[HRS_UUID]).await?;
-                println!("Scan started");
+                print!("Scan started\n");
+                std::io::stdout().flush().unwrap();
                 let device = scan.next().await.unwrap()?;
-                println!("Found Device: [{}] {:?}", device, device.name_async().await);
+                print!("Found Device: [{}] {:?}\n", device, device.name_async().await);
+                std::io::stdout().flush().unwrap();
                 device
             }
         };
 
         if let Err(err) = handle_device(&adapter, &device, tx.clone()).await {
-            println!("Connection error: {err:?}");
+            eprint!("\rConnection error: {err:?}                                                   ");
+            std::io::stderr().flush().unwrap();
         }
     }
 }
@@ -86,7 +94,8 @@ async fn run_server(rx: watch::Receiver<HeartRateReading>) -> Result<(), Box<dyn
         .with_state(AppState { rx });
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3030").await?;
-    println!("Serving web UI at http://127.0.0.1:3030/");
+    print!("Serving web UI at http://127.0.0.1:3030/\n");
+    std::io::stdout().flush().unwrap();
 
     axum::serve(listener, app).await?;
     Ok(())
@@ -206,7 +215,8 @@ async fn handle_device(
 ) -> Result<(), Box<dyn Error>> {
     // Connect
     if !device.is_connected().await {
-        println!("Connecting device: {}", device.id());
+        print!("Connecting device: {}\n", device.id());
+        std::io::stdout().flush().unwrap();
         adapter.connect_device(&device).await?;
     }
 
@@ -245,9 +255,10 @@ async fn handle_device(
             sensor_contact,
         });
 
-        println!(
-            "HeartRateValue: {heart_rate_value}, SensorContactDetected: {sensor_contact:?}"
+        print!(
+            "\rHeartRateValue: {heart_rate_value}, SensorContactDetected: {sensor_contact:?}                    "
         );
+        std::io::stdout().flush().unwrap();
     }
     Err("No longer heart rate notify".into())
 }
