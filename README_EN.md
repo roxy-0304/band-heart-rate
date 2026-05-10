@@ -1,3 +1,5 @@
+[中文](README.md)
+
 ## Disclaimer
 
 > This project is Forked from [Tnze/miband-heart-rate](https://github.com/Tnze/miband-heart-rate), code written by AI.
