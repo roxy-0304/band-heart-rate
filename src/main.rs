@@ -203,220 +203,112 @@ async fn run_server(rx: watch::Receiver<HeartRateReading>) -> Result<(), Box<dyn
 }
 
 async fn index() -> Html<&'static str> {
-    Html(
-        r#"<!DOCTYPE html>
+    Html(r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
     <title>Mi Band Heart Rate</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&display=swap" rel="stylesheet">
     <style>
-        /* 全局布局：背景透明 */
+        :root {
+            --red: #FF3B30;
+            --glow: rgba(255, 59, 48, 0.35);
+            --dim: rgba(255, 59, 48, 0.25);
+        }
+
         html, body {
-            background-color: rgba(0, 0, 0, 0) !important;
+            background: transparent !important;
             margin: 0;
             padding: 0;
             overflow: hidden;
-            height: 100vh;
+            width: 1920px;
+            height: 1080px;
+        }
+
+        body {
+            display: flex;
+            align-items: flex-end;
+            justify-content: flex-start;
+        }
+
+        .container {
             display: flex;
             align-items: center;
-            justify-content: center;
-            font-family: Arial, sans-serif;
+            gap: 14px;
+            margin-left: 60px;
+            margin-bottom: 60px;
         }
 
-        /* 隐藏逻辑：先让所有东西透明 */
-        body * {
-            opacity: 0;
-            transition: opacity 0.3s ease;
+        .heart {
+            width: 90px;
+            height: 90px;
+            flex-shrink: 0;
+            fill: var(--red);
+            animation: pulse 1.2s ease-in-out infinite;
+            filter: drop-shadow(0 0 12px var(--glow));
         }
 
-        /* 强制显示数字和心跳（无论它在哪里层级） */
-        #heart-rate, .heart-rate, .bpm-value, 
-        [class*="heart-rate"], [id*="heart-rate"], 
-        .value, .number {
-            opacity: 1 !important;
-            visibility: visible !important;
-            color: #FF3B30 !important;
-            font-family: "Arial Black", sans-serif;
-            font-size: 85px !important;
-            font-weight: 900;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.4);
+        @keyframes pulse {
+            0%   { transform: scale(1);    filter: drop-shadow(0 0 12px var(--glow)); }
+            15%  { transform: scale(1.14); filter: drop-shadow(0 0 20px var(--glow)); }
+            30%  { transform: scale(1);    filter: drop-shadow(0 0 12px var(--glow)); }
+            45%  { transform: scale(1.07); filter: drop-shadow(0 0 16px var(--glow)); }
+            60%  { transform: scale(1);    filter: drop-shadow(0 0 12px var(--glow)); }
         }
 
-        /* 左侧 SVG 爱心 */
-        #heart-rate::before, .heart-rate::before, .bpm-value::before,
-        [class*="heart-rate"]::before, .value::before {
-            content: "";
-            display: inline-block !important;
-            width: 70px;
-            height: 70px;
-            margin-right: 15px;
-            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23FF3B30"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>');
-            background-repeat: no-repeat;
-            background-size: contain;
-            animation: heartBeat 1.2s infinite;
+        .bpm-number {
+            font-family: 'Orbitron', monospace;
+            font-weight: 700;
+            font-size: 100px;
+            line-height: 1;
+            color: var(--red);
+            text-shadow: 0 0 30px rgba(255, 59, 48, 0.3);
+            transition: color 0.4s ease;
         }
 
-        /* 鼠标悬停安全网：移入时显示设置按钮 */
-        body:hover * {
-            opacity: 1 !important;
-        }
-
-        /* 心跳动画 */
-        @keyframes heartBeat {
-            0% { transform: scale(1); }
-            10% { transform: scale(1.1); }
-            20% { transform: scale(1); }
-        }
-
-        /* 彻底移除可能干扰的背景色块 */
-        div, section, main {
-            background: transparent !important;
-            box-shadow: none !important;
-        }
-
-        /* 设置面板样式 */
-        #settings-panel {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(255, 255, 255, 0.95) !important;
-            border: 1px solid #ccc;
-            padding: 1rem;
-            border-radius: 8px;
-            max-width: 560px;
-            z-index: 1000;
-            opacity: 1 !important;
-        }
-
-        #show-settings-btn {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            opacity: 1 !important;
-            z-index: 999;
-        }
-
-        /* 状态文本样式 */
-        .label {
-            color: #555 !important;
-            opacity: 1 !important;
-        }
-
-        #status {
-            color: #d32f2f !important;
-            font-weight: bold !important;
-            margin: 1rem 0 !important;
-            opacity: 1 !important;
+        .bpm-number.dim {
+            color: var(--dim);
+            text-shadow: none;
         }
     </style>
 </head>
 <body>
-    <div id="heart-rate" class="value">--</div>
-    <div id="status" class="label">等待连接...</div>
-    <div id="sensor-contact-container" style="display: none; opacity: 1 !important;">
-        <div class="label">Sensor contact:</div>
-        <div id="contact">--</div>
-    </div>
-    <button id="show-settings-btn" onclick="showSettings()">Settings</button>
-    <div id="settings-panel" style="display: none;">
-        <div>
-            <button id="toggle-contact-btn" onclick="toggleSensorContact()">Show Sensor Contact</button>
-        </div>
-
-        <h2 style="margin-top: 1.5rem;">Custom CSS</h2>
-        <textarea id="custom-css" rows="10" cols="50" placeholder="Enter your custom CSS here..."></textarea><br>
-        <button onclick="applyCSS()">Apply CSS</button>
-        <button onclick="hideSettings()">Close Settings</button>
+    <div class="container">
+        <svg class="heart" viewBox="0 0 24 24">
+            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5
+                     2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09
+                     C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5
+                     c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+        </svg>
+        <div class="bpm-number" id="heart-rate">--</div>
     </div>
 
     <script>
+        const el = document.getElementById('heart-rate');
+
         async function fetchRate() {
             try {
                 const res = await fetch('/heart-rate');
                 const data = await res.json();
-                
-                if (data.scanning) {
-                    document.getElementById('heart-rate').textContent = '--';
-                    document.getElementById('status').textContent = '🔍 正在重新扫描设备...';
-                    document.getElementById('status').style.color = '#1976d2';
-                } else if (!data.connected) {
-                    document.getElementById('heart-rate').textContent = '--';
-                    document.getElementById('status').textContent = '⚠ 蓝牙已断开连接';
-                    document.getElementById('status').style.color = '#d32f2f';
+                if (data.scanning || !data.connected || data.heart_rate == null) {
+                    el.textContent = '--';
+                    el.classList.add('dim');
                 } else {
-                    document.getElementById('heart-rate').textContent = data.heart_rate;
-                    document.getElementById('status').textContent = '✓ 已连接';
-                    document.getElementById('status').style.color = '#388e3c';
+                    el.textContent = data.heart_rate;
+                    el.classList.remove('dim');
                 }
-                
-                document.getElementById('contact').textContent = data.sensor_contact === null ? 'unknown' : data.sensor_contact;
-            } catch (err) {
-                document.getElementById('heart-rate').textContent = '--';
-                document.getElementById('status').textContent = '✗ 网络错误';
-                document.getElementById('status').style.color = '#d32f2f';
-                document.getElementById('contact').textContent = 'error';
+            } catch {
+                el.textContent = '--';
+                el.classList.add('dim');
             }
         }
+
         setInterval(fetchRate, 1000);
         fetchRate();
-
-        function applyCSS() {
-            const css = document.getElementById('custom-css').value;
-            let style = document.getElementById('custom-style');
-            if (!style) {
-                style = document.createElement('style');
-                style.id = 'custom-style';
-                document.head.appendChild(style);
-            }
-            style.textContent = css;
-            localStorage.setItem('customCSS', css);
-        }
-
-        function setSensorContactVisibility(visible) {
-            const container = document.getElementById('sensor-contact-container');
-            const button = document.getElementById('toggle-contact-btn');
-            container.style.display = visible ? 'block' : 'none';
-            button.textContent = visible ? 'Hide Sensor Contact' : 'Show Sensor Contact';
-            localStorage.setItem('showSensorContact', visible ? '1' : '0');
-        }
-
-        function toggleSensorContact() {
-            const visible = document.getElementById('sensor-contact-container').style.display !== 'block';
-            setSensorContactVisibility(visible);
-        }
-
-        function showSettings() {
-            document.getElementById('settings-panel').style.display = 'block';
-            document.getElementById('show-settings-btn').style.display = 'none';
-        }
-
-        function hideSettings() {
-            document.getElementById('settings-panel').style.display = 'none';
-            document.getElementById('show-settings-btn').style.display = 'inline-block';
-        }
-
-        window.onload = function() {
-            const showContact = localStorage.getItem('showSensorContact') === '1';
-            setSensorContactVisibility(showContact);
-
-            const css = localStorage.getItem('customCSS');
-            if (css) {
-                document.getElementById('custom-css').value = css;
-                applyCSS();
-            }
-
-            if (css || showContact) {
-                showSettings();
-            }
-        };
     </script>
 </body>
-</html>"#,
-    )
+</html>"#)
 }
 
 async fn heart_rate(State(state): State<AppState>) -> Json<HeartRateReading> {

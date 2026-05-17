@@ -16,9 +16,9 @@ Uses the `bluest` crate. Here is its description:
 
 > Bluest is a cross-platform Rust low-power Bluetooth (BLE) library. Currently supports Windows (version 10 and above), MacOS/iOS, and Linux. Android support is planned.
 
-Therefore, theoretically supported:
+Therefore, support:
 
-- Windows 10/11 (tested)
+- Windows 10/11
 - MacOS/iOS
 - Linux
 
@@ -41,4 +41,5 @@ View heart rate data and sensor status in real-time.
 
 ## Screenshot
 
-![Alt text](doc/image.png)
+![Alt text](doc/1.png)
+![Alt text](doc/2.gif)

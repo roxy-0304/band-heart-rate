@@ -16,9 +16,9 @@
 
 > Bluest 是一个跨平台的 Rust 低功耗蓝牙（BLE）库。目前支持 Windows（版本 10 及以上）、MacOS/iOS 和 Linux。Android 支持正在计划中。
 
-因此理论支持：
+因此支持：
 
-- Windows 10/11(测试通过)
+- Windows 10/11
 - MacOS/iOS
 - Linux
 
@@ -39,6 +39,10 @@
 
 实时查看心率数据和传感器状态。
 
+## 提示
+默认的窗口大小为1920x1080，如果显示不完整，请调整窗口大小。
+
 ## 截图
 
-![Alt text](doc/image.png)
+![Alt text](doc/1.png)
+![Alt text](doc/2.gif)
