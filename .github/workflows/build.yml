@@ -24,11 +24,11 @@ jobs:
       id: version
       shell: pwsh
       run: |
-        # 从 Cargo.toml 读基础版本
+        $env:GH_TOKEN = ${{ secrets.GITHUB_TOKEN }}
+
         $content = Get-Content Cargo.toml -Raw
         $baseVersion = [regex]::Match($content, 'version\s*=\s*"([^"]+)"').Groups[1].Value
 
-        # 查询已有的 beta 标签，找到最大编号
         $output = gh api "repos/$env:GITHUB_REPOSITORY/git/refs/tags" --paginate --jq '.[].ref' 2>&1
         if ($LASTEXITCODE -eq 0 -and $output) {
           $tags = $output -split "`n" | Where-Object { $_.Trim() -ne '' }
