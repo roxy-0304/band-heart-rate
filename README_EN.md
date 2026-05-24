@@ -1,4 +1,4 @@
-[English](README_EN.md) [中文](README.md)
+[English](README_EN.md) or [中文](README.md)
 
 ## Disclaimer
 
@@ -35,9 +35,14 @@ Tested on Mi Band 10.
 
 ### Accessing the Web Interface
 
-Open in browser: `http://127.0.0.1:3030`
+Open in your browser: `http://127.0.0.1:3030`
+
+The port number will be displayed when the program starts. The default port is 3030, and it will automatically switch to another port if a conflict occurs.
 
 View heart rate data and sensor status in real-time.
+
+## Tips
+The default window size is 1920x1080. If it is not fully displayed, please adjust the window size.
 
 ## Screenshot
 

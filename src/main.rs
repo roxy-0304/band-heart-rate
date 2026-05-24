@@ -194,8 +194,18 @@ async fn run_server(rx: watch::Receiver<HeartRateReading>) -> Result<(), Box<dyn
         .route("/heart-rate", get(heart_rate))
         .with_state(AppState { rx });
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3030").await?;
-    print!("Serving web UI at http://127.0.0.1:3030/\n");
+    let listener = match tokio::net::TcpListener::bind("127.0.0.1:3030").await {
+        Ok(l) => {
+            print!("Serving web UI at http://127.0.0.1:3030/\n");
+            l
+        }
+        Err(_) => {
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            let port = l.local_addr()?.port();
+            print!("Port 3030 is occupied, serving web UI at http://127.0.0.1:{}/\n", port);
+            l
+        }
+    };
     std::io::stdout().flush().unwrap();
 
     axum::serve(listener, app).await?;
