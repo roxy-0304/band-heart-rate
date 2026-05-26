@@ -4,9 +4,9 @@
 
 > This project is forked from [Tnze/miband-heart-rate](https://github.com/Tnze/miband-heart-rate), code written by AI.
 
-# Mi Band Heart Rate Demo Program
+# BLE Heart Rate Monitor Demo Program
 
-A demo program for receiving Mi Band "Exercise Heart Rate Broadcast". You need to enable the broadcast function in the band's settings - Heart Rate Broadcast.
+A demo program for receiving heart rate broadcast data via the standard BLE Heart Rate Service (UUID 0x180D). You need to enable the heart rate broadcast function in your wearable device's settings.
 
 Welcome to secondary development.
 
@@ -22,9 +22,20 @@ Therefore, support:
 - MacOS/iOS
 - Linux
 
-## Supported Mi Bands
+## Compatible Devices
 
-Tested on Mi Band 10.
+This program is compatible with any wearable device that supports the standard BLE Heart Rate Service (UUID 0x180D), including but not limited to:
+
+- **Xiaomi Mi Band** series (tested on Mi Band 10)
+- **Honor Band** series
+- **Huawei Band/Watch** series
+- **Amazfit** devices
+- **Apple Watch**
+- Other sports watches/chest straps that support BLE heart rate broadcasting
+
+> Enable the "Heart Rate Broadcast" feature in your device settings to be detected by this program.
+>
+> You can customize the allowed device name keywords via the `MIBAND_ALLOWED_DEVICES` environment variable (comma-separated). Default keywords: `band`, `amazfit`, `watch`.
 
 ## Features
 
