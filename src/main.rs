@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use axum::{extract::State, response::Html, routing::get, Json, Router};
+use tauri::Emitter;
 
 /// 打印并立即刷新 stdout 的宏（换行版本）
 macro_rules! printfl {
@@ -36,7 +37,6 @@ use bluest::{btuuid::bluetooth_uuid_from_u16, Adapter, Device, Uuid};
 use futures_lite::stream::StreamExt;
 use serde::Serialize;
 use tokio::sync::watch;
-use tokio::signal;
 use tokio::time::{timeout, Duration};
 
 const HRS_UUID: Uuid = bluetooth_uuid_from_u16(0x180D);
@@ -147,326 +147,75 @@ struct AppState {
     rx: watch::Receiver<HeartRateReading>,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let (tx, rx) = watch::channel(HeartRateReading::default());
+// ===== Tauri Application Entry =====
 
-    tokio::spawn(async move {
-        if let Err(err) = run_server(rx).await {
-            eprintfl!("\nWeb 服务器错误: {err}\n");
-        }
-    });
+fn main() {
+    tauri::Builder::default()
+        .setup(|app| {
+            let (tx, rx) = watch::channel(HeartRateReading::default());
 
-    let adapter = match Adapter::default().await {
-        Some(a) => a,
-        None => {
-            printfl!("程序已退出: ⚠ Bluetooth 适配器未找到（系统无蓝牙或驱动异常）\n");
-            return Ok(());
-        }
-    };
+            // Clone a receiver for the Tauri event emitter
+            let mut rx_tauri = rx.clone();
 
-    // wait_available 可能在某些蓝牙栈异常状态下永远不返回，加 5 秒超时
-    match tokio::time::timeout(Duration::from_secs(5), adapter.wait_available()).await {
-        Ok(Ok(())) => {} // 蓝牙适配器可用
-        Ok(Err(e)) => {
-            printfl!("程序已退出: ⚠ Bluetooth 适配器不可用: {e}\n");
-            return Ok(());
-        }
-        Err(_) => {
-            printfl!("程序已退出: ⚠ Bluetooth 适配器无响应（5 秒超时），请检查蓝牙是否开启\n");
-            return Ok(());
-        }
-    }
+            // Clone app handle for use in spawned tasks
+            let app_handle = app.handle().clone();
 
-    let exit_reason = tokio::select! {
-        _ = signal::ctrl_c() => {
-            "用户按 Ctrl+C".to_string()
-        }
-        result = run_loop(adapter, tx) => {
-            match result {
-                Ok(()) => "正常退出".to_string(),
-                Err(e) => format!("{e}"),
-            }
-        }
-    };
+            // --- Spawn axum Web server (OBS UI, unchanged) ---
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = run_server(rx).await {
+                    eprintfl!("\nWeb 服务器错误: {err}\n");
+                }
+            });
 
-    printfl!("程序已退出: {exit_reason}\n");
-    Ok(())
+            // --- Spawn Tauri event emitter: forward watch changes to the frontend ---
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    if rx_tauri.changed().await.is_ok() {
+                        let reading = *rx_tauri.borrow();
+                        // Emit as JSON to the frontend
+                        let _ = app_handle.emit("hr-update", reading);
+                    } else {
+                        // Sender dropped — task should exit
+                        break;
+                    }
+                }
+            });
+
+            // --- Spawn Bluetooth loop in a separate task ---
+            tauri::async_runtime::spawn(async move {
+                let adapter = match Adapter::default().await {
+                    Some(a) => a,
+                    None => {
+                        printfl!("⚠ Bluetooth 适配器未找到（系统无蓝牙或驱动异常）\n");
+                        return;
+                    }
+                };
+
+                // wait_available 可能在某些蓝牙栈异常状态下永远不返回，加 5 秒超时
+                match tokio::time::timeout(Duration::from_secs(5), adapter.wait_available()).await {
+                    Ok(Ok(())) => {} // 蓝牙适配器可用
+                    Ok(Err(e)) => {
+                        printfl!("⚠ Bluetooth 适配器不可用: {e}\n");
+                        return;
+                    }
+                    Err(_) => {
+                        printfl!("⚠ Bluetooth 适配器无响应（5 秒超时），请检查蓝牙是否开启\n");
+                        return;
+                    }
+                }
+
+                if let Err(e) = run_loop(adapter, tx).await {
+                    eprintfl!("蓝牙循环退出: {e}\n");
+                }
+            });
+
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("启动 Tauri 应用失败");
 }
 
-async fn run_loop(
-    adapter: Adapter,
-    tx: watch::Sender<HeartRateReading>,
-) -> Result<(), Box<dyn Error>> {
-    let mut disconnect_time: Option<Instant> = None;
-    // 记录曾经成功连接过的设备 ID，方便断线后快速重连
-    let mut known_ids: HashSet<String> = HashSet::new();
-    // 重连尝试计数（用于指数退避）
-    let mut reconnect_attempts: u32 = 0;
-    // 是否曾经成功连接过（用于区分首次启动和重连）
-    let mut has_ever_connected = false;
-
-    loop {
-        // Check if we've been disconnected for too long
-        if let Some(time) = disconnect_time {
-            let elapsed = time.elapsed().as_secs();
-            if elapsed >= SCAN_TOTAL_TIMEOUT_SECS {
-                printfl_inline!("[✗] 超时退出：{} 秒内未找到设备\n", SCAN_TOTAL_TIMEOUT_SECS);
-                return Err("扫描超时：120 秒内未找到任何设备".into());
-            }
-        }
-
-        // 是否处于重连模式（已连接过但断开）
-        let is_reconnecting = has_ever_connected && disconnect_time.is_some();
-
-        // Update state to show we're scanning
-        tx.send_replace(HeartRateReading { scanning: true, ..Default::default() });
-
-        // 显示状态
-        if is_reconnecting {
-            reconnect_attempts += 1;
-            printfl_inline!("[重连 #{reconnect_attempts}] 正在扫描设备...");
-        } else {
-            reconnect_attempts = 0;
-            printfl!("正在扫描设备...\n");
-        }
-
-        // Collect all devices discovered during the scan window
-        let devices = match scan_all_devices(&adapter, tx.clone(), &known_ids, is_reconnecting).await {
-            Ok(devices) => devices,
-            Err(err) => {
-                if is_reconnecting {
-                    printfl_inline!("[重连 #{reconnect_attempts}] 扫描失败，等待重试...");
-                } else {
-                    printfl!("扫描失败: {:?}\n", err);
-                }
-                tx.send_replace(HeartRateReading::default());
-                tokio::time::sleep(Duration::from_secs(SCAN_RETRY_DELAY_SECS)).await;
-                continue;
-            }
-        };
-
-        // Try each device until one succeeds
-        let keywords = allowed_keywords();
-        for device in &devices {
-            let device_name = device.name_async().await.ok();
-            if !known_ids.contains(&device.id().to_string()) && !device_name_allowed(device_name.as_deref(), keywords) {
-                if !is_reconnecting {
-                    printfl!("跳过设备 [{}] {:?}: 不在允许关键词列表中\n", device.id(), device_name);
-                }
-                continue;
-            }
-            if is_reconnecting {
-                printfl_inline!("[重连 #{reconnect_attempts}] 正在连接设备 {}...", device.id());
-            }
-            match handle_device(&adapter, device, tx.clone()).await {
-                Ok(()) => {
-                    known_ids.insert(device.id().to_string());
-                    has_ever_connected = true;
-                    break;
-                }
-                Err(err) if err.downcast_ref::<ReconnectError>().is_some() => {
-                    known_ids.insert(device.id().to_string());
-                    has_ever_connected = true;
-                    continue;
-                }
-                Err(err) => {
-                    if !is_reconnecting {
-                        printfl!("无法连接该设备: {err:?}，尝试下一个...\n");
-                    }
-                    continue;
-                }
-            }
-        }
-
-        // All devices exhausted
-        tx.send_replace(HeartRateReading::default());
-        disconnect_time = Some(Instant::now());
-
-        if has_ever_connected {
-            // 无论本次是否成功连接过，都使用同一套退避逻辑
-            reconnect_attempts += 1;
-            let backoff_secs = std::cmp::min(
-                1 << reconnect_attempts.min(10),
-                RECONNECT_BACKOFF_MAX_SECS,
-            );
-            let detail = if devices.is_empty() { "未找到可连接设备" } else { "等待" };
-            printfl_inline!("[重连 #{reconnect_attempts}] {detail} {backoff_secs} 秒后重扫...");
-            tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
-        } else {
-            // Never connected — enter light polling
-            reconnect_attempts = 0;
-            printfl!("所有设备忙碌或不可达，进入轻量轮询模式...\n");
-
-            if let Err(err) = poll_for_available_device(&adapter, tx.clone(), &known_ids).await {
-                return Err(err);
-            }
-            disconnect_time = None;
-            continue;
-        }
-    }
-}
-
-/// 轻量轮询模式：全部设备被占时，用较短的扫描快速轮询是否有人释放。
-/// 总超时由 SCAN_TOTAL_TIMEOUT_SECS 控制。
-async fn poll_for_available_device(
-    adapter: &Adapter,
-    tx: watch::Sender<HeartRateReading>,
-    _known_ids: &HashSet<String>,
-) -> Result<(), Box<dyn Error>> {
-    let deadline = Duration::from_secs(SCAN_TOTAL_TIMEOUT_SECS);
-    let poll_duration = Duration::from_secs(5);
-    let start = Instant::now();
-    let mut poll_count: u32 = 0;
-
-    loop {
-        poll_count += 1;
-        let elapsed = start.elapsed();
-        if elapsed >= deadline {
-            return Err("轮询超时：所有设备均忙碌，退出程序".into());
-        }
-
-        printfl_inline!("[轮询 #{poll_count}] 正在扫描可用设备（剩余 {} 秒）...",
-            deadline.as_secs().saturating_sub(elapsed.as_secs()));
-
-        tx.send_replace(HeartRateReading { scanning: true, ..Default::default() });
-
-        let mut scan = match adapter.discover_devices(&[HRS_UUID]).await {
-            Ok(s) => s,
-            Err(e) => {
-                // 错误仅用一行提示
-                printfl_inline!("[轮询 #{poll_count}] 扫描错误: {e:?}");
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                continue;
-            }
-        };
-
-        let mut devices: HashSet<Device> = HashSet::new();
-        let _ = timeout(poll_duration, async {
-            while let Some(device_result) = scan.next().await {
-                if let Ok(device) = device_result {
-                    // 收集所有设备，不按名字过滤（名字可能未加载完整）
-                    devices.insert(device);
-                }
-            }
-        }).await;
-
-        tx.send_replace(HeartRateReading::default());
-
-        if devices.is_empty() {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            continue;
-        }
-
-        let keywords = allowed_keywords();
-        for device in &devices {
-            let device_name = device.name_async().await.ok();
-            if !device_name_allowed(device_name.as_deref(), keywords) {
-                continue;
-            }
-            printfl_inline!("[轮询 #{poll_count}] 尝试连接设备 {}...", device.id());
-            let handled = handle_device(adapter, device, tx.clone()).await;
-            // handle_device 只要连接上了就算成功（Ok 或 ReconnectError 都行）
-            if handled.is_ok() || handled.as_ref().err().and_then(|e| e.downcast_ref::<ReconnectError>()).is_some() {
-                printfl!("\n[✓] 轮询成功，已连接设备 {}\n", device.id());
-                return Ok(());
-            }
-            // 连接失败，下一个
-            let _ = adapter.disconnect_device(device).await;
-            continue;
-        }
-
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-}
-
-/// 扫描并收集所有发现的设备（最多 SCAN_ATTEMPT_TIMEOUT_SECS 秒）。
-/// 与旧版不同：**一旦发现第一个匹配的设备就立即返回**，不再干等 30 秒。
-/// - `silent`: 如果为 true，则只输出一行总结，不输出详细日志（用于重连模式）
-async fn scan_all_devices(
-    adapter: &Adapter,
-    tx: watch::Sender<HeartRateReading>,
-    _known_ids: &HashSet<String>,
-    silent: bool,
-) -> Result<Vec<Device>, Box<dyn Error>> {
-    let keywords = allowed_keywords();
-    if !silent {
-        printfl!("允许的设备关键词: {:?}\n", keywords);
-        if !_known_ids.is_empty() {
-            printfl!("已知设备 ID: {:?}\n", _known_ids);
-        }
-    }
-
-    tx.send_replace(HeartRateReading { scanning: true, ..Default::default() });
-
-    let mut scan = adapter.discover_devices(&[HRS_UUID]).await?;
-
-    // 用 HashSet 去重，同一个手环的多次广播不会重复添加
-    let mut devices: HashSet<Device> = HashSet::new();
-
-    // 扫描最多 SCAN_ATTEMPT_TIMEOUT_SECS 秒，但第一个设备出现后等待 2 秒收集备选就返回
-    let deadline = Duration::from_secs(SCAN_ATTEMPT_TIMEOUT_SECS);
-    let settle_duration = Duration::from_secs(2); // 找到第一个后，再等 2 秒收集备选
-
-    let _ = timeout(deadline, async {
-        while let Some(device_result) = scan.next().await {
-            match device_result {
-                Ok(device) => {
-                    let name = device.name_async().await;
-                    let did = device.id().to_string();
-                    // 扫描阶段不按名字过滤（BLE 名字可能延迟到达），全部收集，
-                    // 名字匹配推迟到实际连接时再做
-                    let is_new = devices.insert(device);
-                    if is_new && !silent {
-                        printfl!("发现设备: [{}] {:?}\n", did, name);
-                    }
-                    if devices.len() == 1 {
-                        break; // 找到第一个新设备，进入 settle 阶段
-                    }
-                }
-                Err(e) => {
-                    if !silent {
-                        eprintfl!("扫描错误: {e:?}\n");
-                    }
-                }
-            }
-        }
-    }).await;
-
-    // 如果找到至少一个设备，再等最多 2 秒收集更多备选（已去重）
-    if !devices.is_empty() {
-        if !silent {
-            printfl!("已找到首个设备，继续收集 2 秒备选...\n");
-        }
-        let _ = timeout(settle_duration, async {
-            while let Some(device_result) = scan.next().await {
-                if let Ok(device) = device_result {
-                    let name = device.name_async().await;
-                    let id = device.id().to_string();
-                    if devices.insert(device) && !silent {
-                        printfl!("发现额外设备: [{}] {:?}\n", id, name);
-                    }
-                }
-            }
-        }).await;
-    }
-
-    // 转回 Vec 供上层逻辑使用
-    let devices: Vec<Device> = devices.into_iter().collect();
-
-    tx.send_replace(HeartRateReading::default());
-
-    if devices.is_empty() {
-        Err("未找到任何设备".into())
-    } else {
-        if !silent {
-            printfl!("扫描完成，发现 {} 个设备\n", devices.len());
-        }
-        Ok(devices)
-    }
-}
-
-async fn run_server(rx: watch::Receiver<HeartRateReading>) -> Result<(), Box<dyn Error>> {
+async fn run_server(rx: watch::Receiver<HeartRateReading>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let app = Router::new()
         .route("/", get(index))
         .route("/heart-rate", get(heart_rate))
@@ -603,11 +352,285 @@ async fn heart_rate(State(state): State<AppState>) -> Json<HeartRateReading> {
     Json(*state.rx.borrow())
 }
 
+// ===== Bluetooth logic (unchanged from original) =====
+
+async fn run_loop(
+    adapter: Adapter,
+    tx: watch::Sender<HeartRateReading>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut disconnect_time: Option<Instant> = None;
+    // 记录曾经成功连接过的设备 ID，方便断线后快速重连
+    let mut known_ids: HashSet<String> = HashSet::new();
+    // 重连尝试计数（用于指数退避）
+    let mut reconnect_attempts: u32 = 0;
+    // 是否曾经成功连接过（用于区分首次启动和重连）
+    let mut has_ever_connected = false;
+
+    loop {
+        // Check if we've been disconnected for too long
+        if let Some(time) = disconnect_time {
+            let elapsed = time.elapsed().as_secs();
+            if elapsed >= SCAN_TOTAL_TIMEOUT_SECS {
+                printfl_inline!("[✗] 超时退出：{} 秒内未找到设备\n", SCAN_TOTAL_TIMEOUT_SECS);
+                return Err("扫描超时：120 秒内未找到任何设备".into());
+            }
+        }
+
+        // 是否处于重连模式（已连接过但断开）
+        let is_reconnecting = has_ever_connected && disconnect_time.is_some();
+
+        // Update state to show we're scanning
+        tx.send_replace(HeartRateReading { scanning: true, ..Default::default() });
+
+        // 显示状态
+        if is_reconnecting {
+            reconnect_attempts += 1;
+            printfl_inline!("[重连 #{reconnect_attempts}] 正在扫描设备...");
+        } else {
+            reconnect_attempts = 0;
+            printfl!("正在扫描设备...\n");
+        }
+
+        // Collect all devices discovered during the scan window
+        let devices = match scan_all_devices(&adapter, tx.clone(), &known_ids, is_reconnecting).await {
+            Ok(devices) => devices,
+            Err(err) => {
+                if is_reconnecting {
+                    printfl_inline!("[重连 #{reconnect_attempts}] 扫描失败，等待重试...");
+                } else {
+                    printfl!("扫描失败: {:?}\n", err);
+                }
+                tx.send_replace(HeartRateReading::default());
+                tokio::time::sleep(Duration::from_secs(SCAN_RETRY_DELAY_SECS)).await;
+                continue;
+            }
+        };
+
+        // Try each device until one succeeds
+        let keywords = allowed_keywords();
+        for device in &devices {
+            let device_name = device.name_async().await.ok();
+            if !known_ids.contains(&device.id().to_string()) && !device_name_allowed(device_name.as_deref(), keywords) {
+                if !is_reconnecting {
+                    printfl!("跳过设备 [{}] {:?}: 不在允许关键词列表中\n", device.id(), device_name);
+                }
+                continue;
+            }
+            if is_reconnecting {
+                printfl_inline!("[重连 #{reconnect_attempts}] 正在连接设备 {}...", device.id());
+            }
+            match handle_device(&adapter, device, tx.clone()).await {
+                Ok(()) => {
+                    known_ids.insert(device.id().to_string());
+                    has_ever_connected = true;
+                    break;
+                }
+                Err(err) if err.downcast_ref::<ReconnectError>().is_some() => {
+                    known_ids.insert(device.id().to_string());
+                    has_ever_connected = true;
+                    continue;
+                }
+                Err(err) => {
+                    if !is_reconnecting {
+                        printfl!("无法连接该设备: {err:?}，尝试下一个...\n");
+                    }
+                    continue;
+                }
+            }
+        }
+
+        // All devices exhausted
+        tx.send_replace(HeartRateReading::default());
+        disconnect_time = Some(Instant::now());
+
+        if has_ever_connected {
+            // 无论本次是否成功连接过，都使用同一套退避逻辑
+            reconnect_attempts += 1;
+            let backoff_secs = std::cmp::min(
+                1 << reconnect_attempts.min(10),
+                RECONNECT_BACKOFF_MAX_SECS,
+            );
+            let detail = if devices.is_empty() { "未找到可连接设备" } else { "等待" };
+            printfl_inline!("[重连 #{reconnect_attempts}] {detail} {backoff_secs} 秒后重扫...");
+            tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+        } else {
+            // Never connected — enter light polling
+            reconnect_attempts = 0;
+            printfl!("所有设备忙碌或不可达，进入轻量轮询模式...\n");
+
+            if let Err(err) = poll_for_available_device(&adapter, tx.clone(), &known_ids).await {
+                return Err(err);
+            }
+            disconnect_time = None;
+            continue;
+        }
+    }
+}
+
+/// 轻量轮询模式：全部设备被占时，用较短的扫描快速轮询是否有人释放。
+/// 总超时由 SCAN_TOTAL_TIMEOUT_SECS 控制。
+async fn poll_for_available_device(
+    adapter: &Adapter,
+    tx: watch::Sender<HeartRateReading>,
+    _known_ids: &HashSet<String>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let deadline = Duration::from_secs(SCAN_TOTAL_TIMEOUT_SECS);
+    let poll_duration = Duration::from_secs(5);
+    let start = Instant::now();
+    let mut poll_count: u32 = 0;
+
+    loop {
+        poll_count += 1;
+        let elapsed = start.elapsed();
+        if elapsed >= deadline {
+            return Err("轮询超时：所有设备均忙碌，退出程序".into());
+        }
+
+        printfl_inline!("[轮询 #{poll_count}] 正在扫描可用设备（剩余 {} 秒）...",
+            deadline.as_secs().saturating_sub(elapsed.as_secs()));
+
+        tx.send_replace(HeartRateReading { scanning: true, ..Default::default() });
+
+        let mut scan = match adapter.discover_devices(&[HRS_UUID]).await {
+            Ok(s) => s,
+            Err(e) => {
+                // 错误仅用一行提示
+                printfl_inline!("[轮询 #{poll_count}] 扫描错误: {e:?}");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+
+        let mut devices: HashSet<Device> = HashSet::new();
+        let _ = timeout(poll_duration, async {
+            while let Some(device_result) = scan.next().await {
+                if let Ok(device) = device_result {
+                    // 收集所有设备，不按名字过滤（名字可能未加载完整）
+                    devices.insert(device);
+                }
+            }
+        }).await;
+
+        tx.send_replace(HeartRateReading::default());
+
+        if devices.is_empty() {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            continue;
+        }
+
+        let keywords = allowed_keywords();
+        for device in &devices {
+            let device_name = device.name_async().await.ok();
+            if !device_name_allowed(device_name.as_deref(), keywords) {
+                continue;
+            }
+            printfl_inline!("[轮询 #{poll_count}] 尝试连接设备 {}...", device.id());
+            let handled = handle_device(adapter, device, tx.clone()).await;
+            // handle_device 只要连接上了就算成功（Ok 或 ReconnectError 都行）
+            if handled.is_ok() || handled.as_ref().err().and_then(|e| e.downcast_ref::<ReconnectError>()).is_some() {
+                printfl!("\n[✓] 轮询成功，已连接设备 {}\n", device.id());
+                return Ok(());
+            }
+            // 连接失败，下一个
+            let _ = adapter.disconnect_device(device).await;
+            continue;
+        }
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+/// 扫描并收集所有发现的设备（最多 SCAN_ATTEMPT_TIMEOUT_SECS 秒）。
+/// 与旧版不同：**一旦发现第一个匹配的设备就立即返回**，不再干等 30 秒。
+/// - `silent`: 如果为 true，则只输出一行总结，不输出详细日志（用于重连模式）
+async fn scan_all_devices(
+    adapter: &Adapter,
+    tx: watch::Sender<HeartRateReading>,
+    _known_ids: &HashSet<String>,
+    silent: bool,
+) -> Result<Vec<Device>, Box<dyn Error + Send + Sync>> {
+    let keywords = allowed_keywords();
+    if !silent {
+        printfl!("允许的设备关键词: {:?}\n", keywords);
+        if !_known_ids.is_empty() {
+            printfl!("已知设备 ID: {:?}\n", _known_ids);
+        }
+    }
+
+    tx.send_replace(HeartRateReading { scanning: true, ..Default::default() });
+
+    let mut scan = adapter.discover_devices(&[HRS_UUID]).await?;
+
+    // 用 HashSet 去重，同一个手环的多次广播不会重复添加
+    let mut devices: HashSet<Device> = HashSet::new();
+
+    // 扫描最多 SCAN_ATTEMPT_TIMEOUT_SECS 秒，但第一个设备出现后等待 2 秒收集备选就返回
+    let deadline = Duration::from_secs(SCAN_ATTEMPT_TIMEOUT_SECS);
+    let settle_duration = Duration::from_secs(2); // 找到第一个后，再等 2 秒收集备选
+
+    let _ = timeout(deadline, async {
+        while let Some(device_result) = scan.next().await {
+            match device_result {
+                Ok(device) => {
+                    let name = device.name_async().await;
+                    let did = device.id().to_string();
+                    // 扫描阶段不按名字过滤（BLE 名字可能延迟到达），全部收集，
+                    // 名字匹配推迟到实际连接时再做
+                    let is_new = devices.insert(device);
+                    if is_new && !silent {
+                        printfl!("发现设备: [{}] {:?}\n", did, name);
+                    }
+                    if devices.len() == 1 {
+                        break; // 找到第一个新设备，进入 settle 阶段
+                    }
+                }
+                Err(e) => {
+                    if !silent {
+                        eprintfl!("扫描错误: {e:?}\n");
+                    }
+                }
+            }
+        }
+    }).await;
+
+    // 如果找到至少一个设备，再等最多 2 秒收集更多备选（已去重）
+    if !devices.is_empty() {
+        if !silent {
+            printfl!("已找到首个设备，继续收集 2 秒备选...\n");
+        }
+        let _ = timeout(settle_duration, async {
+            while let Some(device_result) = scan.next().await {
+                if let Ok(device) = device_result {
+                    let name = device.name_async().await;
+                    let id = device.id().to_string();
+                    if devices.insert(device) && !silent {
+                        printfl!("发现额外设备: [{}] {:?}\n", id, name);
+                    }
+                }
+            }
+        }).await;
+    }
+
+    // 转回 Vec 供上层逻辑使用
+    let devices: Vec<Device> = devices.into_iter().collect();
+
+    tx.send_replace(HeartRateReading::default());
+
+    if devices.is_empty() {
+        Err("未找到任何设备".into())
+    } else {
+        if !silent {
+            printfl!("扫描完成，发现 {} 个设备\n", devices.len());
+        }
+        Ok(devices)
+    }
+}
+
 async fn handle_device(
     adapter: &Adapter,
     device: &Device,
     tx: watch::Sender<HeartRateReading>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     printfl!("正在连接设备: {}\n", device.id());
 
     // Connect — 先断开清理状态，再重连，确保 bluest 能获取 HRS 服务访问权
