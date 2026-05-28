@@ -31,20 +31,11 @@ jobs:
         rustup toolchain install stable
         rustup target add x86_64-pc-windows-msvc
 
-    - name: Install Tauri CLI
-      run: cargo install tauri-cli --version "^2"
-
     - name: Build
-      run: cargo tauri build --no-bundle
-
-    - name: Package
-      shell: pwsh
-      run: |
-        New-Item -ItemType Directory -Force -Path package
-        Copy-Item target\release\band-heart-rate.exe package\
+      run: cargo build --release
 
     - name: Upload Release Asset
       uses: softprops/action-gh-release@v2
       with:
-        files: package/*
+        files: target/release/band-heart-rate.exe
         token: ${{ secrets.GITHUB_TOKEN }}
