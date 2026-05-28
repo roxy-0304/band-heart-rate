@@ -31,8 +31,11 @@ jobs:
         rustup toolchain install stable
         rustup target add x86_64-pc-windows-msvc
 
+    - name: Install Tauri CLI
+      run: cargo install tauri-cli --version "^2"
+
     - name: Build
-      run: cargo build --release
+      run: cargo tauri build --no-bundle
 
     - name: Package
       shell: pwsh
