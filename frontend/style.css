@@ -138,14 +138,14 @@ body {
 }
 
 .bpm-number.no-data {
-  color: #4a4f58;
+  color: #e0e3e8;
   text-shadow: none;
 }
 
-.bpm-number.zone-warmup  { color: #4FC3F7; text-shadow: 0 0 40px rgba(79, 195, 247, 0.3); }
-.bpm-number.zone-fatburn { color: #66BB6A; text-shadow: 0 0 40px rgba(102, 187, 106, 0.3); }
-.bpm-number.zone-aerobic { color: #FFA726; text-shadow: 0 0 40px rgba(255, 167, 38, 0.3); }
-.bpm-number.zone-limit   { color: #EF5350; text-shadow: 0 0 40px rgba(239, 83, 80, 0.3); }
+.bpm-number.zone-warmup  { color: #ffffff; text-shadow: 0 0 40px rgba(79, 195, 247, 0.3); }
+.bpm-number.zone-fatburn { color: #ffffff; text-shadow: 0 0 40px rgba(102, 187, 106, 0.3); }
+.bpm-number.zone-aerobic { color: #ffffff; text-shadow: 0 0 40px rgba(255, 167, 38, 0.3); }
+.bpm-number.zone-limit   { color: #ffffff; text-shadow: 0 0 40px rgba(239, 83, 80, 0.3); }
 
 .bpm-label {
   font-size: 20px;

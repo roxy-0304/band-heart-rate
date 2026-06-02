@@ -1,9 +1,10 @@
 #![windows_subsystem = "windows"]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use std::io::Write;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use axum::{extract::State, response::Html, routing::get, Json, Router};
@@ -68,23 +69,26 @@ const DEFAULT_ALLOWED_KEYWORDS: &[&str] = &[
 
 /// 读取允许的设备名称关键词（优先读取环境变量 MIBAND_ALLOWED_DEVICES，逗号分隔；否则使用默认列表）
 /// 结果通过 OnceLock 缓存，只在首次调用时解析一次
-fn allowed_keywords() -> Vec<String> {
-    match std::env::var("MIBAND_ALLOWED_DEVICES") {
-        Ok(val) => {
-            let keywords: Vec<String> = val.split(',')
-                .map(|s| s.trim().to_lowercase())
-                .filter(|s| !s.is_empty())
-                .collect();
-            if keywords.is_empty() {
+fn allowed_keywords() -> &'static [String] {
+    static KEYWORDS: OnceLock<Vec<String>> = OnceLock::new();
+    KEYWORDS.get_or_init(|| {
+        match std::env::var("MIBAND_ALLOWED_DEVICES") {
+            Ok(val) => {
+                let keywords: Vec<String> = val.split(',')
+                    .map(|s| s.trim().to_lowercase())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if keywords.is_empty() {
+                    DEFAULT_ALLOWED_KEYWORDS.iter().map(|s| s.to_lowercase()).collect()
+                } else {
+                    keywords
+                }
+            }
+            Err(_) => {
                 DEFAULT_ALLOWED_KEYWORDS.iter().map(|s| s.to_lowercase()).collect()
-            } else {
-                keywords
             }
         }
-        Err(_) => {
-            DEFAULT_ALLOWED_KEYWORDS.iter().map(|s| s.to_lowercase()).collect()
-        }
-    }
+    })
 }
 
 /// 检查设备名称是否匹配允许的关键词列表
@@ -123,12 +127,15 @@ impl fmt::Debug for ReconnectError {
 
 impl Error for ReconnectError {}
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Serialize)]
 struct HeartRateReading {
     heart_rate: u16,
     sensor_contact: Option<bool>,
     connected: bool,
     scanning: bool,
+    /// 蓝牙任务退出时填充错误信息，前端可据此显示提示
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 impl Default for HeartRateReading {
@@ -138,6 +145,7 @@ impl Default for HeartRateReading {
             sensor_contact: None,
             connected: false,
             scanning: false,
+            error: None,
         }
     }
 }
@@ -155,7 +163,25 @@ struct LatestReading(Arc<Mutex<HeartRateReading>>);
 
 #[tauri::command]
 fn get_latest_reading(state: tauri::State<'_, LatestReading>) -> HeartRateReading {
-    *state.0.lock().unwrap()
+    let guard = state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.clone()
+}
+
+/// 为窗口添加关闭按钮 guard：第一次 CloseRequested 时 prevent + close，
+/// 第二次（由 close() 触发）放行。
+fn install_close_guard(window: &tauri::WebviewWindow) {
+    let w = window.clone();
+    let close_guard = Arc::new(AtomicBool::new(false));
+    let close_guard_1 = close_guard.clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            if !close_guard_1.load(Ordering::SeqCst) {
+                api.prevent_close();
+                close_guard_1.store(true, Ordering::SeqCst);
+                let _ = w.close();
+            }
+        }
+    });
 }
 
 // ===== Tauri Application Entry =====
@@ -193,10 +219,10 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 loop {
                     if rx_tauri.changed().await.is_ok() {
-                        let reading = *rx_tauri.borrow();
+                        let reading = rx_tauri.borrow().clone();
                         // Always keep latest reading for catch-up
                         if let Ok(mut latest) = latest_1.0.lock() {
-                            *latest = reading;
+                            *latest = reading.clone();
                         }
                         // Only emit to frontend if window exists AND is visible
                         // (window is destroyed when minimised to tray — saves ~60-100MB)
@@ -236,18 +262,7 @@ fn main() {
                             .center()
                             .build()
                             {
-                                let w = new_win.clone();
-                                let close_guard = Arc::new(AtomicBool::new(false));
-                                let close_guard_1 = close_guard.clone();
-                                new_win.on_window_event(move |event| {
-                                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                                        if !close_guard_1.load(Ordering::SeqCst) {
-                                            api.prevent_close();
-                                            close_guard_1.store(true, Ordering::SeqCst);
-                                            let _ = w.close();
-                                        }
-                                    }
-                                });
+                                install_close_guard(&new_win);
                             }
                         }
                     }
@@ -261,23 +276,8 @@ fn main() {
                 .build(app)?;
 
             // --- 关闭按钮 → 直接销毁窗口（释放 ~60-100MB WebView 内存）---
-            // AtomicBool guard breaks the infinite loop:
-            // CloseRequested → close() → CloseRequested → close() → ...
             let window = app.get_webview_window("main").unwrap();
-            let window_clone = window.clone();
-            let close_guard = Arc::new(AtomicBool::new(false));
-            let close_guard_1 = close_guard.clone();
-            window.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    if !close_guard_1.load(Ordering::SeqCst) {
-                        // 1st: user clicked X → prevent + guard + close
-                        api.prevent_close();
-                        close_guard_1.store(true, Ordering::SeqCst);
-                        let _ = window_clone.close();
-                    }
-                    // 2nd: close() triggered CloseRequested again → let it pass
-                }
-            });
+            install_close_guard(&window);
 
             // --- Spawn Bluetooth loop in a separate task ---
             tauri::async_runtime::spawn(async move {
@@ -285,6 +285,10 @@ fn main() {
                     Some(a) => a,
                     None => {
                         printfl!("⚠ Bluetooth 适配器未找到（系统无蓝牙或驱动异常）\n");
+                        tx.send_replace(HeartRateReading {
+                            error: Some("蓝牙适配器未找到".into()),
+                            ..Default::default()
+                        });
                         return;
                     }
                 };
@@ -294,16 +298,28 @@ fn main() {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => {
                         printfl!("⚠ Bluetooth 适配器不可用: {e}\n");
+                        tx.send_replace(HeartRateReading {
+                            error: Some(format!("蓝牙适配器不可用: {e}")),
+                            ..Default::default()
+                        });
                         return;
                     }
                     Err(_) => {
                         printfl!("⚠ Bluetooth 适配器无响应（5 秒超时），请检查蓝牙是否开启\n");
+                        tx.send_replace(HeartRateReading {
+                            error: Some("蓝牙适配器无响应，请检查蓝牙是否开启".into()),
+                            ..Default::default()
+                        });
                         return;
                     }
                 }
 
                 if let Err(e) = run_loop(adapter, tx.clone()).await {
                     eprintfl!("蓝牙循环退出: {e}\n");
+                    tx.send_replace(HeartRateReading {
+                        error: Some(format!("蓝牙服务已停止: {e}")),
+                        ..Default::default()
+                    });
                 }
             });
 
@@ -349,148 +365,11 @@ async fn run_server(rx: watch::Receiver<HeartRateReading>) -> Result<(), Box<dyn
 }
 
 async fn index() -> Html<&'static str> {
-    Html(r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8" />
-    <title>Mi Band Heart Rate</title>
-    <style>
-        @font-face {
-            font-family: 'MiSans VF';
-            src: url('https://cdn.cnbj1.fds.api.mi-img.com/vipmlmodel/font/MiSans/MiSans_VF.woff2') format('woff2-variations');
-            font-weight: 100 900;
-            font-style: normal;
-            font-display: swap;
-        }
-
-        :root {
-            --red: #FF3B30;
-            --glow: rgba(255, 59, 48, 0.35);
-        }
-
-        html, body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            width: 100vw;
-            height: 100vh;
-        }
-
-        body {
-            background: #0a0a0a;
-            display: flex;
-            align-items: flex-end;
-            justify-content: flex-start;
-        }
-
-        .container {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            margin-left: 60px;
-            margin-bottom: 60px;
-        }
-
-        .heart {
-            width: 90px;
-            height: 90px;
-            flex-shrink: 0;
-            fill: var(--red);
-            animation: pulse 1.2s ease-in-out infinite;
-            filter: drop-shadow(0 0 12px var(--glow));
-            will-change: transform, filter;
-        }
-
-        @keyframes pulse {
-            0%, 30%, 60%, 100% {
-                transform: scale(1);
-                filter: drop-shadow(0 0 12px var(--glow));
-            }
-            15% {
-                transform: scale(1.14);
-                filter: drop-shadow(0 0 20px var(--glow));
-            }
-            45% {
-                transform: scale(1.07);
-                filter: drop-shadow(0 0 16px var(--glow));
-            }
-        }
-
-        .bpm-number {
-            font-family: 'MiSans VF', "Segoe UI", "Microsoft YaHei", sans-serif;
-            font-weight: 700;
-            font-size: 88px;
-            line-height: 1;
-            color: #ffffff;
-            text-shadow: 0 0 30px rgba(255, 255, 255, 0.3);
-            font-variant-numeric: tabular-nums;
-            font-feature-settings: 'tnum';
-            transition: opacity 0.15s ease;
-        }
-
-        .bpm-number.updating {
-            opacity: 0.6;
-        }
-
-        .bpm-number.dim {
-            color: rgba(255, 255, 255, 0.25);
-            text-shadow: none;
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-            .heart { animation: none; }
-            .bpm-number { transition: none; }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <svg class="heart" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5
-                     2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09
-                     C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5
-                     c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
-        </svg>
-        <div class="bpm-number" id="heart-rate" role="status" aria-live="polite">--</div>
-    </div>
-
-    <script>
-        const el = document.getElementById('heart-rate');
-
-        async function fetchRate() {
-            try {
-                const res = await fetch('/heart-rate');
-                const data = await res.json();
-                if (data.scanning || !data.connected || data.heart_rate == null) {
-                    el.textContent = '--';
-                    el.classList.add('dim');
-                    el.classList.remove('updating');
-                } else {
-                    el.classList.add('updating');
-                    requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            el.textContent = data.heart_rate;
-                            el.classList.remove('dim');
-                            el.classList.remove('updating');
-                        });
-                    });
-                }
-            } catch {
-                el.textContent = '--';
-                el.classList.add('dim');
-                el.classList.remove('updating');
-            }
-        }
-
-        setInterval(fetchRate, 1200);
-        fetchRate();
-    </script>
-</body>
-</html>"#)
+    Html(include_str!("../web-ui.html"))
 }
 
 async fn heart_rate(State(state): State<AppState>) -> Json<HeartRateReading> {
-    Json(*state.rx.borrow())
+    Json(state.rx.borrow().clone())
 }
 
 // ===== Bluetooth logic =====
@@ -501,7 +380,7 @@ async fn run_loop(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut disconnect_time: Option<Instant> = None;
     // 记录曾经成功连接过的设备 ID，方便断线后快速重连
-    let mut known_ids: HashMap<String, bool> = HashMap::new();
+    let mut known_ids: HashSet<String> = HashSet::new();
     // 重连尝试计数（用于指数退避）
     let mut reconnect_attempts: u32 = 0;
     // 是否曾经成功连接过（用于区分首次启动和重连）
@@ -546,11 +425,16 @@ async fn run_loop(
             }
         };
 
-        // Try each device until one succeeds
+        // Try each device — known_ids first, then keyword-matched
         let keywords = allowed_keywords();
-        for device in &devices {
+        // 先连接已知设备（之前成功连过的），再试其他关键词匹配的设备
+        let (known_devices, other_devices): (Vec<&Device>, Vec<&Device>) = devices
+            .iter()
+            .partition(|d| known_ids.contains(&d.id().to_string()));
+
+        for device in known_devices.iter().chain(other_devices.iter()) {
             let device_name = device.name_async().await.ok();
-            if !known_ids.contains_key(&device.id().to_string()) && !device_name_allowed(device_name.as_deref(), &keywords) {
+            if !known_ids.contains(&device.id().to_string()) && !device_name_allowed(device_name.as_deref(), keywords) {
                 if !is_reconnecting {
                     printfl!("跳过设备 [{}] {:?}: 不在允许关键词列表中\n", device.id(), device_name);
                 }
@@ -559,20 +443,27 @@ async fn run_loop(
             if is_reconnecting {
                 printfl_inline!("[重连 #{reconnect_attempts}] 正在连接设备 {}...", device.id());
             }
+            // handle_device 现在只在设备物理断开或停止广播时返回 Err(ReconnectError)，
+            // 不会返回 Ok(())（因为通知循环结束后总是断开返回 Err）。
+            // 无论 Err 是 ReconnectError 还是其他错误，我们都统一处理：
+            // - ReconnectError → 记录 known_id, 设置 has_ever_connected 和 disconnect_time, 继续下一个
+            // - 其他错误 → 简单继续下一个
             match handle_device(&adapter, device, tx.clone()).await {
                 Ok(()) => {
-                    known_ids.insert(device.id().to_string(), true);
+                    // handle_device 目前永远不会返回 Ok, 此分支保留以备今后扩展
+                    known_ids.insert(device.id().to_string());
                     has_ever_connected = true;
                     disconnect_time = None;
                     break;
                 }
-                Err(err) if err.downcast_ref::<ReconnectError>().is_some() => {
-                    known_ids.insert(device.id().to_string(), true);
-                    has_ever_connected = true;
-                    disconnect_time = Some(Instant::now());
-                    continue;
-                }
                 Err(err) => {
+                    // 只要是 ReconnectError（断开或停止广播），说明曾经连接成功过
+                    if err.downcast_ref::<ReconnectError>().is_some() {
+                        known_ids.insert(device.id().to_string());
+                        has_ever_connected = true;
+                        disconnect_time = Some(Instant::now());
+                        continue;
+                    }
                     if !is_reconnecting {
                         printfl!("无法连接该设备: {err:?}，尝试下一个...\n");
                     }
@@ -599,7 +490,7 @@ async fn run_loop(
             reconnect_attempts = 0;
             printfl!("所有设备忙碌或不可达，进入轻量轮询模式...\n");
 
-            if let Err(err) = poll_for_available_device(&adapter, tx.clone()).await {
+            if let Err(err) = poll_for_available_device(&adapter, tx.clone(), &known_ids).await {
                 return Err(err);
             }
             disconnect_time = None;
@@ -613,6 +504,7 @@ async fn run_loop(
 async fn poll_for_available_device(
     adapter: &Adapter,
     tx: watch::Sender<HeartRateReading>,
+    known_ids: &HashSet<String>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let deadline = Duration::from_secs(SCAN_TOTAL_TIMEOUT_SECS);
     let poll_duration = Duration::from_secs(5);
@@ -661,10 +553,15 @@ async fn poll_for_available_device(
             continue;
         }
 
+        // 优先尝试已知设备，再试其他
         let keywords = allowed_keywords();
-        for device in &devices {
+        let (known_devices, other_devices): (Vec<&Device>, Vec<&Device>) = devices
+            .iter()
+            .partition(|d| known_ids.contains(&d.id().to_string()));
+
+        for device in known_devices.iter().chain(other_devices.iter()) {
             let device_name = device.name_async().await.ok();
-            if !device_name_allowed(device_name.as_deref(), &keywords) {
+            if !known_ids.contains(&device.id().to_string()) && !device_name_allowed(device_name.as_deref(), keywords) {
                 continue;
             }
             printfl_inline!("[轮询 #{poll_count}] 尝试连接设备 {}...", device.id());
@@ -682,7 +579,7 @@ async fn poll_for_available_device(
 }
 
 /// 扫描并收集所有发现的设备（最多 SCAN_ATTEMPT_TIMEOUT_SECS 秒）。
-/// 一旦发现第一个匹配的设备就立即返回，再等 2 秒收集备选，不再干等 30 秒。
+/// 一旦发现第一个匹配的设备就立即返回，再等 3 秒收集备选，不再干等 10 秒。
 /// 重连模式下只输出简短的单行状态，不输出详细日志。
 async fn scan_all_devices(
     adapter: &Adapter,
@@ -700,9 +597,9 @@ async fn scan_all_devices(
     // 用 HashSet 去重，同一个手环的多次广播不会重复添加
     let mut devices_set: HashSet<Device> = HashSet::new();
 
-    // 扫描最多 SCAN_ATTEMPT_TIMEOUT_SECS 秒，但第一个设备出现后等待 2 秒收集备选就返回
+    // 扫描最多 SCAN_ATTEMPT_TIMEOUT_SECS 秒，但第一个设备出现后等待 3 秒收集备选就返回
     let deadline = Duration::from_secs(SCAN_ATTEMPT_TIMEOUT_SECS);
-    let settle_duration = Duration::from_secs(2);
+    let settle_duration = Duration::from_secs(3);
 
     let _ = timeout(deadline, async {
         while let Some(device_result) = scan.next().await {
@@ -729,7 +626,7 @@ async fn scan_all_devices(
 
     if !devices_set.is_empty() {
         if !is_reconnecting {
-            printfl!("已找到首个设备，继续收集 2 秒备选...\n");
+            printfl!("已找到首个设备，继续收集 3 秒备选...\n");
         }
         let _ = timeout(settle_duration, async {
             while let Some(device_result) = scan.next().await {
@@ -843,6 +740,7 @@ async fn handle_device(
                     sensor_contact,
                     connected: true,
                     scanning: false,
+                    error: None,
                 });
 
                 print!("\r心率值: {heart_rate_value}, 传感器接触: {sensor_contact:?}                    ");
