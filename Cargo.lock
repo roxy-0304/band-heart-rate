@@ -192,6 +192,7 @@ dependencies = [
  "bluest",
  "futures-lite",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tokio",

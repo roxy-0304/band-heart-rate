@@ -6,7 +6,7 @@
     "core:default",
     {
       "identifier": "core:event:default",
-      "allow": [{ "event": "**" }]
+      "allow": [{ "event": "hr-update" }]
     }
   ]
 }

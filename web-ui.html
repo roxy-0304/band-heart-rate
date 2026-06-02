@@ -105,36 +105,49 @@
     <script>
         const el = document.getElementById('heart-rate');
 
-        async function fetchRate() {
-            try {
-                const res = await fetch('/heart-rate');
-                const data = await res.json();
-                if (data.error) {
-                    console.error('Heart rate service error:', data.error);
-                }
-                if (data.scanning || !data.connected || data.heart_rate == null) {
-                    el.textContent = '--';
-                    el.classList.add('dim');
-                    el.classList.remove('updating');
-                } else {
-                    el.classList.add('updating');
-                    requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            el.textContent = data.heart_rate;
-                            el.classList.remove('dim');
-                            el.classList.remove('updating');
-                        });
-                    });
-                }
-            } catch {
+        function updateDisplay(data) {
+            if (data.scanning || !data.connected || data.heart_rate == null) {
                 el.textContent = '--';
                 el.classList.add('dim');
                 el.classList.remove('updating');
+            } else {
+                el.classList.add('updating');
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        el.textContent = data.heart_rate;
+                        el.classList.remove('dim');
+                        el.classList.remove('updating');
+                    });
+                });
             }
         }
 
-        setInterval(fetchRate, 1200);
-        fetchRate();
+        // SSE 实时推送（替代轮询，延迟更低，不遗漏数据）
+        function connectSSE() {
+            const es = new EventSource('/heart-rate-stream');
+
+            es.onmessage = function(e) {
+                try {
+                    const data = JSON.parse(e.data);
+                    updateDisplay(data);
+                } catch (err) {
+                    console.error('SSE parse error:', err);
+                }
+            };
+
+            es.onerror = function() {
+                es.close();
+                // 连接断开时回退到轮询模式
+                console.warn('SSE disconnected, falling back to polling');
+                el.textContent = '--';
+                el.classList.add('dim');
+
+                // 定期尝试重连 SSE
+                setTimeout(connectSSE, 3000);
+            };
+        }
+
+        connectSSE();
     </script>
 </body>
 </html>

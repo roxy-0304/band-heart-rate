@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.cnbj1.fds.api.mi-img.com; font-src 'self' https://cdn.cnbj1.fds.api.mi-img.com; connect-src 'self' http://127.0.0.1:*"
     }
   },
   "bundle": {

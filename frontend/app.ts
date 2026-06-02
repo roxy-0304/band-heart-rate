@@ -9,6 +9,7 @@ interface HeartRatePayload {
   sensor_contact: boolean | null;
   connected: boolean;
   scanning: boolean;
+  error?: string | null;
 }
 
 type ZoneName = "warmup" | "fatburn" | "aerobic" | "limit";
@@ -66,9 +67,18 @@ function getZoneLabel(zone: ZoneName | null): string {
 
 // ===== Update UI =====
 
-function updateStatus(connected: boolean, scanning: boolean) {
+function updateStatus(connected: boolean, scanning: boolean, error?: string | null) {
   statusDot.className = "status-dot";
   statusText.className = "status-text";
+
+  if (error) {
+    // 蓝牙错误：显示错误信息，标记为断开状态
+    statusDot.classList.add("disconnected");
+    statusText.classList.add("disconnected");
+    statusText.textContent = error;
+    heartIcon.classList.add("paused");
+    return;
+  }
 
   if (connected) {
     statusDot.classList.add("connected");
@@ -100,6 +110,10 @@ function updateHeartRate(bpm: number) {
 
   bpmNumber.textContent = String(bpm);
   heartIcon.classList.remove("paused");
+
+  // 动态心跳动画速度：每拍 60/bpm 秒
+  const beatDuration = 60 / bpm;
+  heartIcon.style.setProperty("--heartbeat-duration", `${beatDuration.toFixed(2)}s`);
 
   const zone = getZone(bpm);
   if (zone) {
@@ -170,7 +184,7 @@ function handleData(bpm: number) {
 async function catchUp() {
   try {
     const data = await invoke<HeartRatePayload>("get_latest_reading");
-    updateStatus(data.connected, data.scanning);
+    updateStatus(data.connected, data.scanning, data.error);
     if (data.connected && data.heart_rate > 0) {
       handleData(data.heart_rate);
     }
@@ -184,8 +198,8 @@ async function init() {
   await listen<HeartRatePayload>("hr-update", (event) => {
     const data = event.payload;
 
-    // Update connection status
-    updateStatus(data.connected, data.scanning);
+    // Update connection status (with error info if any)
+    updateStatus(data.connected, data.scanning, data.error);
 
     // Update heart rate display
     if (data.connected && data.heart_rate > 0) {

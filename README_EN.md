@@ -39,16 +39,15 @@ You need to enable the heart rate broadcast function in your wearable device's s
 
 ## ✨ Features
 
-- **Tauri Desktop App** — Sleek dark-themed UI, minimizes to system tray when closed, continues collecting data in the background
-- **Real-time Heart Rate Display** — Large digits with pulsing heartbeat animation
+- **Tauri Desktop App** — Keeps collecting data in the background when the window is closed
+- **Real-time Heart Rate Display** — Large digits with real-time refresh
 - **Heart Rate Zone Detection** — Automatically identifies Warmup / Fat Burn / Aerobic / Limit zones with color-coded indicators
 - **Live Statistics** — Automatically tracks min / max / average heart rate, with one-click reset
-- **Connection Status** — Status bar shows Connected / Scanning / Disconnected
-- **System Tray** — Close window to tray, keep the app running in the background; click tray icon to restore
-- **Web Server** — Built-in web server for OBS live stream overlays, supports custom CSS
-- **OBS Live Stream Compatible** — Transparent background, no green screen needed
-- **Auto Reconnect** — Automatically scans and reconnects when device disconnects, with exponential backoff
-- **Cross-platform** — Windows, macOS/iOS, Linux
+- **Connection Status** — Shows Connected / Scanning / Disconnected and Bluetooth error states
+- **System Tray** — Minimises to tray when window is closed, click tray icon to restore
+- **Web Server** — Can be used as an OBS live stream overlay, transparent background, supports custom CSS
+- **Auto Reconnect** — Automatically scans and reconnects when the device disconnects, with exponential backoff
+- **Cross-platform** — Windows, MacOS, Linux
 
 ---
 
@@ -60,13 +59,13 @@ The program provides two independent interfaces that work simultaneously:
 
 The main interface with full interactive experience:
 
-- Large real-time heart rate display with heartbeat animation
+- Large real-time heart rate display
 - Heart rate zone color badges (Warmup / Fat Burn / Aerobic / Limit)
 - Min / Max / Average statistics panel
 - Reset statistics button
 - System tray icon: right-click to show window or quit
-- **Closing the window does NOT exit the app** — it minimizes to the system tray and continues collecting data
-- Re-open the app or click tray "Show Window" to restore the interface
+- **Closing the window does NOT exit the app** — the app continues collecting data in the background
+- Click tray "Show Window" to rebuild the interface and automatically retrieve the latest heart rate data
 
 ### Web Server (OBS)
 
@@ -76,14 +75,11 @@ Used for OBS live stream overlays. Default address:
 http://127.0.0.1:3030
 ```
 
-(Automatically switches to an available port if 3030 is occupied. Check the startup message for the actual address.)
+(Automatically switches to a random available port if 3030 is occupied. Check the startup message for the actual address.)
 
 Web page features:
 - Designed for **1920x1080** resolution, suitable for fullscreen display
 - **Transparent background** — can be overlaid directly onto live streams without a green screen
-- Heart icon with **pulsing animation**
-- Heart rate number displayed in **Orbitron font** for a tech-forward look
-- Number appears **dimmed** when not connected
 
 **Custom Styles:**
 
@@ -165,8 +161,9 @@ cargo build --release
 3. Run the program
 4. The program will automatically scan for nearby heart rate broadcasting devices and connect
 5. Heart rate data will be displayed in real-time on the desktop interface, and you can also access the Web UI in your browser
-6. **Close window**: minimizes to system tray, continues background collection
-7. **Exit completely**: right-click tray icon → Quit
+6. **Close window**: the app continues collecting data in the system tray
+7. **Restore window**: click tray "Show Window" or re-launch the program
+8. **Exit completely**: right-click tray icon → Quit
 
 ---
 
@@ -194,18 +191,19 @@ band-heart-rate/
 │   └── main.rs              # Main entry point (Bluetooth, Web server, Tauri event system)
 ├── frontend/
 │   ├── index.html           # Tauri desktop window HTML
-│   ├── style.css            # Dark tech theme styles
+│   ├── style.css            # Frontend styles
 │   ├── app.ts               # TypeScript frontend logic (heart rate display, stats, zones, events)
 │   ├── package.json         # Frontend dependency management
-│   ├── tsconfig.json        # TypeScript config
-│   └── dist/                # Compiled JS output
+│   └── tsconfig.json        # TypeScript config
+├── web-ui.html              # OBS live stream overlay HTML (inline styles & JS)
 ├── icons/
 │   └── icon.ico             # App icon
 ├── capabilities/
 │   └── default.json         # Tauri permissions
 ├── doc/
-│   ├── 1.png                # Screenshot (to be updated with desktop UI)
-│   └── 2.gif                # Animated screenshot
+│   ├── 1.png                # Desktop main interface screenshot
+│   ├── 2.gif                # Live demo animation
+│   └── 3.png                # Desktop feature demo screenshot
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml           # CI workflow
@@ -225,7 +223,7 @@ band-heart-rate/
 
 ![Desktop Main Interface](doc/1.png)
 
-![Tauri Desktop UI Feature Demo](doc/3.png)
+![Desktop Feature Demo](doc/3.png)
 
 ![Live Demo](doc/2.gif)
 
@@ -235,12 +233,12 @@ band-heart-rate/
 
 Uses the `bluest` crate. Here is its description:
 
-> Bluest is a cross-platform Rust low-power Bluetooth (BLE) library. Currently supports Windows (version 10 and above), MacOS/iOS, and Linux. Android support is planned.
+> Bluest is a cross-platform Rust low-power Bluetooth (BLE) library. Currently supports Windows (version 10 and above), MacOS, and Linux. Android support is planned.
 
 Therefore, supported:
 
 - Windows 10/11
-- MacOS/iOS
+- MacOS
 - Linux
 
 ---
