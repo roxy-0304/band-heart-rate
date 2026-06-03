@@ -1,8 +1,8 @@
-<!DOCTYPE html>
+pub const HTML: &str = r##"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-    <title>Mi Band Heart Rate</title>
+    <title>Band Heart Rate</title>
     <style>
         @font-face {
             font-family: 'MiSans VF';
@@ -73,16 +73,12 @@
             color: #ffffff;
             text-shadow: 0 0 30px rgba(255, 255, 255, 0.3);
             font-variant-numeric: tabular-nums;
+            font-feature-settings: 'tnum';
             transition: opacity 0.15s ease;
         }
 
         .bpm-number.updating {
             opacity: 0.6;
-        }
-
-        .bpm-number.dim {
-            color: rgba(255, 255, 255, 0.25);
-            text-shadow: none;
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -104,50 +100,39 @@
 
     <script>
         const el = document.getElementById('heart-rate');
+        let currentHr = null;
 
-        function updateDisplay(data) {
-            if (data.scanning || !data.connected || data.heart_rate == null) {
-                el.textContent = '--';
-                el.classList.add('dim');
-                el.classList.remove('updating');
-            } else {
-                el.classList.add('updating');
-                requestAnimationFrame(() => {
+        function connect() {
+            const source = new EventSource('/heart-rate-stream');
+
+            source.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                const newHr = (data.connected && data.heart_rate > 0)
+                    ? data.heart_rate
+                    : null;
+
+                if (newHr !== currentHr) {
+                    el.classList.add('updating');
                     requestAnimationFrame(() => {
-                        el.textContent = data.heart_rate;
-                        el.classList.remove('dim');
-                        el.classList.remove('updating');
+                        requestAnimationFrame(() => {
+                            el.textContent = newHr != null ? newHr : '--';
+                            el.classList.remove('updating');
+                        });
                     });
-                });
-            }
-        }
-
-        // SSE 实时推送（替代轮询，延迟更低，不遗漏数据）
-        function connectSSE() {
-            const es = new EventSource('/heart-rate-stream');
-
-            es.onmessage = function(e) {
-                try {
-                    const data = JSON.parse(e.data);
-                    updateDisplay(data);
-                } catch (err) {
-                    console.error('SSE parse error:', err);
+                    currentHr = newHr;
                 }
             };
 
-            es.onerror = function() {
-                es.close();
-                // 连接断开时回退到轮询模式
-                console.warn('SSE disconnected, falling back to polling');
+            source.onerror = () => {
                 el.textContent = '--';
-                el.classList.add('dim');
-
-                // 定期尝试重连 SSE
-                setTimeout(connectSSE, 3000);
+                currentHr = null;
+                source.close();
+                // Retry connection after 3 seconds
+                setTimeout(connect, 3000);
             };
         }
 
-        connectSSE();
+        connect();
     </script>
 </body>
-</html>
+</html>"##;

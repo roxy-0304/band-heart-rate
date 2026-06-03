@@ -1,0 +1,198 @@
+export component MainWindow inherits Window {
+    title: "Band Heart Rate Monitor";
+    preferred-width: 600px;
+    preferred-height: 750px;
+    background: #0a0e16;
+
+    // External properties set from Rust
+    in property <string> status-text: "断开连接";
+    in property <color> status-color: #ef4444;
+    in property <string> bpm-text: "--";
+    in property <string> zone-label: "--";
+    in property <color> zone-color: #4a4f58;
+    in property <color> zone-bg-color: #0f131a;
+    in property <string> stat-min: "--";
+    in property <string> stat-max: "--";
+    in property <string> stat-avg: "--";
+    in property <bool> heart-beating: false;
+
+    // Callbacks
+    callback reset-stats();
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 0px;
+
+        // === Status Bar ===
+        HorizontalLayout {
+            padding-bottom: 16px;
+            spacing: 8px;
+            alignment: start;
+
+            status-dot := Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.status-color;
+            }
+
+            Text {
+                text: root.status-text;
+                font-size: 12px;
+                font-weight: 600;
+                color: root.status-color;
+                vertical-alignment: center;
+            }
+        }
+
+        // === Hero Section (flexible) ===
+        VerticalLayout {
+            alignment: center;
+            spacing: 4px;
+
+            // Heart icon
+            Text {
+                text: "♥";
+                font-size: 64px;
+                color: #ef4444;
+                horizontal-alignment: center;
+                opacity: root.heart-beating ? 1.0 : 0.3;
+            }
+
+            // BPM number
+            Text {
+                text: root.bpm-text;
+                font-size: 128px;
+                font-weight: 700;
+                color: #e0e3e8;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            // BPM label
+            Text {
+                text: "BPM";
+                font-size: 20px;
+                font-weight: 300;
+                color: #8b949e;
+                horizontal-alignment: center;
+            }
+
+            // Zone badge
+            Rectangle {
+                height: 32px;
+                border-radius: 16px;
+                background: root.zone-bg-color;
+
+                Text {
+                    text: root.zone-label;
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: root.zone-color;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // === Stats Bar ===
+        Rectangle {
+            height: 1px;
+            background: #8b949e;
+            opacity: 0.12;
+        }
+
+        HorizontalLayout {
+            padding-top: 16px;
+            padding-bottom: 12px;
+
+            // Min
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: "最低";
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: #8b949e;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.stat-min;
+                    font-size: 28px;
+                    font-weight: 700;
+                    color: #4fc3f7;
+                    horizontal-alignment: center;
+                }
+            }
+
+            // Max
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: "最高";
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: #8b949e;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.stat-max;
+                    font-size: 28px;
+                    font-weight: 700;
+                    color: #ef5350;
+                    horizontal-alignment: center;
+                }
+            }
+
+            // Avg
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: "平均";
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: #8b949e;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.stat-avg;
+                    font-size: 28px;
+                    font-weight: 700;
+                    color: #e0e3e8;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        // === Reset Button ===
+        HorizontalLayout {
+            alignment: center;
+            padding-top: 4px;
+
+            Rectangle {
+                width: 120px;
+                height: 36px;
+                border-radius: 8px;
+                background: #8b949e;
+                opacity: 0.1;
+                border-width: 1px;
+                border-color: #8b949e;
+
+                Text {
+                    text: "↻ 重置统计";
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: #8b949e;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                ta := TouchArea {
+                    clicked => {
+                        root.reset-stats();
+                    }
+                }
+            }
+        }
+    }
+}

@@ -10,14 +10,9 @@
 
 - [About](#about)
 - [✨ Features](#features)
-- [🖥️ Dual Interface](#dual-interface)
-  - [Desktop App (Tauri)](#desktop-app-tauri)
-  - [Web Server (OBS)](#web-server-obs)
-  - [Heart Rate Zones](#heart-rate-zones)
-- [📺 OBS Live Stream Overlay Setup](#obs-live-stream-overlay-setup)
+- [🖥️ Native Interface](#native-interface)
+- [📺 Live Stream Overlay](#live-stream-overlay)
 - [📦 Quick Start](#quick-start)
-  - [Download Pre-built Binary](#download-pre-built-binary)
-  - [Build from Source](#build-from-source)
 - [🚀 Usage Guide](#usage-guide)
 - [⚙️ Environment Variables](#environment-variables)
 - [📁 Project Structure](#project-structure)
@@ -29,7 +24,7 @@
 
 ## About
 
-**Band Heart Rate Monitor** is a Tauri-based desktop heart rate monitoring application that receives real-time heart rate data from wearable devices via the standard BLE Heart Rate Service (UUID 0x180D). It also includes a built-in web server that can be used as an OBS live stream overlay.
+**Band Heart Rate Monitor** is a native desktop heart rate monitoring application built with Rust and the Slint GUI framework. It receives real-time heart rate data from wearable devices via the standard BLE Heart Rate Service (UUID 0x180D). The Slint-based native rendering engine provides low memory usage and high frame rate. A built-in HTTP server allows remote viewing or integration with live stream overlays.
 
 You need to enable the heart rate broadcast function in your wearable device's settings.
 
@@ -39,82 +34,48 @@ You need to enable the heart rate broadcast function in your wearable device's s
 
 ## ✨ Features
 
-- **Tauri Desktop App** — Keeps collecting data in the background when the window is closed
+- **Slint Native Window** — Pixel-level rendering, minimal CPU and memory usage, high frame rate
 - **Real-time Heart Rate Display** — Large digits with real-time refresh
 - **Heart Rate Zone Detection** — Automatically identifies Warmup / Fat Burn / Aerobic / Limit zones with color-coded indicators
 - **Live Statistics** — Automatically tracks min / max / average heart rate, with one-click reset
 - **Connection Status** — Shows Connected / Scanning / Disconnected and Bluetooth error states
-- **System Tray** — Minimises to tray when window is closed, click tray icon to restore
-- **Web Server** — Can be used as an OBS live stream overlay, transparent background, supports custom CSS
+- **HTTP API Server** — Supports REST and SSE real-time push, easily integrated with browsers or multiple clients
 - **Auto Reconnect** — Automatically scans and reconnects when the device disconnects, with exponential backoff
 - **Cross-platform** — Windows, MacOS, Linux
 
 ---
 
-## 🖥️ Dual Interface
+## 🖥️ Native Interface
 
-The program provides two independent interfaces that work simultaneously:
-
-### Desktop App (Tauri)
-
-The main interface with full interactive experience:
+The main interface is a Slint native rendering window offering efficient real-time monitoring:
 
 - Large real-time heart rate display
 - Heart rate zone color badges (Warmup / Fat Burn / Aerobic / Limit)
 - Min / Max / Average statistics panel
 - Reset statistics button
-- System tray icon: right-click to show window or quit
-- **Closing the window does NOT exit the app** — the app continues collecting data in the background
-- Click tray "Show Window" to rebuild the interface and automatically retrieve the latest heart rate data
+- No browser or WebView required, reducing memory and CPU usage
 
-### Web Server (OBS)
+---
 
-Used for OBS live stream overlays. Default address:
+## 📺 Live Stream Overlay
+
+The built-in HTTP server provides the following endpoints for integration:
+
+| Endpoint | Description |
+|----------|-------------|
+| GET /heart-rate | Get current heart rate as JSON |
+| GET /heart-rate-stream | SSE real-time push of heart rate data |
+| GET /health | Health check and version info |
+
+Default listen address:
 
 ```
 http://127.0.0.1:3030
 ```
 
-(Automatically switches to a random available port if 3030 is occupied. Check the startup message for the actual address.)
+(Automatically uses a random port if 3030 is occupied. Check startup logs for the actual address.)
 
-Web page features:
-- Designed for **1920x1080** resolution, suitable for fullscreen display
-- **Transparent background** — can be overlaid directly onto live streams without a green screen
-
-**Custom Styles:**
-
-```css
-:root {
-  --red: #00FF00;   /* Change to green */
-}
-```
-
----
-
-### Heart Rate Zones
-
-Zones are automatically calculated as a percentage of **maximum heart rate** (default reference: `220 - 30 = 190`):
-
-| Zone | Range | Color | Description |
-|------|-------|-------|-------------|
-| 🟦 Warmup | 0%–60% | Blue `#4FC3F7` | Low intensity, suitable for warming up |
-| 🟩 Fat Burn | 60%–70% | Green `#66BB6A` | Moderate intensity, optimal fat burning |
-| 🟧 Aerobic | 70%–80% | Orange `#FFA726` | High intensity aerobic, improves cardiovascular fitness |
-| 🟥 Limit | 80%–100% | Red `#EF5350` | Very high intensity, anaerobic endurance training |
-
----
-
-## 📺 OBS Live Stream Overlay Setup
-
-1. Run the program and ensure the Web UI is accessible
-2. In OBS, click `+` → **Browser** to add a browser source
-3. Configure the source properties:
-   - **URL**: `http://127.0.0.1:3030`
-   - **Width**: `1920`
-   - **Height**: `1080`
-4. Click OK to finish
-
-The page has a transparent background by default — no chroma key or green screen setup needed.
+Access this URL in a browser or OBS browser source to display heart rate data. Supports custom frontend styles.
 
 ---
 
@@ -123,7 +84,7 @@ The page has a transparent background by default — no chroma key or green scre
 ### Download Pre-built Binary
 
 1. Go to the [GitHub Releases page](https://github.com/Roxy-0304/band-heart-rate/releases)
-2. Download the latest `band-heart-rate.exe` (or the executable for your platform)
+2. Download the latest executable for your platform (e.g., `band-heart-rate.exe` for Windows)
 3. Run it directly
 
 ### Build from Source
@@ -131,7 +92,7 @@ The page has a transparent background by default — no chroma key or green scre
 **Requirements:**
 
 - [Rust toolchain](https://www.rust-lang.org/tools/install) (recommended via rustup)
-- [Node.js](https://nodejs.org/) (for compiling the frontend TypeScript)
+- Bluetooth enabled on your device (Windows requires Bluetooth support)
 
 **Build steps:**
 
@@ -140,16 +101,11 @@ The page has a transparent background by default — no chroma key or green scre
 git clone https://github.com/Roxy-0304/band-heart-rate.git
 cd band-heart-rate
 
-# Install frontend dependencies and build
-cd frontend
-npm install
-npm run build
-cd ..
-
-# Build release version
+# Build default version with native GUI
 cargo build --release
 
-# The executable is at target/release/band-heart-rate.exe
+# Or build headless version (HTTP API only, no GUI)
+cargo build --release --no-default-features --features=""
 ```
 
 ---
@@ -158,12 +114,10 @@ cargo build --release
 
 1. Enable **Heart Rate Broadcast** in your **band/watch settings**
 2. Make sure Bluetooth is enabled on your device
-3. Run the program
+3. Run the compiled executable
 4. The program will automatically scan for nearby heart rate broadcasting devices and connect
-5. Heart rate data will be displayed in real-time on the desktop interface, and you can also access the Web UI in your browser
-6. **Close window**: the app continues collecting data in the system tray
-7. **Restore window**: click tray "Show Window" or re-launch the program
-8. **Exit completely**: right-click tray icon → Quit
+5. Heart rate data will be displayed in real-time in the native window, and also accessible via HTTP API
+6. Access `http://127.0.0.1:3030/heart-rate-stream` in a browser to view the real-time data stream
 
 ---
 
@@ -188,28 +142,21 @@ band-heart-rate.exe
 ```
 band-heart-rate/
 ├── src/
-│   └── main.rs              # Main entry point (Bluetooth, Web server, Tauri event system)
-├── frontend/
-│   ├── index.html           # Tauri desktop window HTML
-│   ├── style.css            # Frontend styles
-│   ├── app.ts               # TypeScript frontend logic (heart rate display, stats, zones, events)
-│   ├── package.json         # Frontend dependency management
-│   └── tsconfig.json        # TypeScript config
-├── web-ui.html              # OBS live stream overlay HTML (inline styles & JS)
-├── icons/
-│   └── icon.ico             # App icon
-├── capabilities/
-│   └── default.json         # Tauri permissions
+│   ├── main.rs              # Entry point and initialization
+│   ├── gui.rs               # Slint native GUI window logic
+│   ├── ble.rs               # BLE heart rate device communication
+│   ├── server.rs            # HTTP API server (REST and SSE)
+│   ├── types.rs             # Shared data structure definitions
+│   └── macros.rs            # Utility macro definitions
+├── ui/
+│   └── app.slint            # Slint UI layout definition
 ├── doc/
 │   ├── 1.png                # Desktop main interface screenshot
 │   ├── 2.gif                # Live demo animation
 │   └── 3.png                # Desktop feature demo screenshot
-├── .github/
-│   └── workflows/
-│       ├── ci.yml           # CI workflow
-│       └── release.yml      # GitHub Actions automated build & release
-├── build.rs                 # Tauri build script
-├── tauri.conf.json          # Tauri configuration
+├── icons/
+│   └── icon.ico             # App icon
+├── build.rs                 # Build script
 ├── Cargo.toml               # Rust project configuration and dependencies
 ├── Cargo.lock               # Dependency lock file
 ├── README.md                # Chinese documentation
@@ -231,11 +178,7 @@ band-heart-rate/
 
 ## Supported Platforms
 
-Uses the `bluest` crate. Here is its description:
-
-> Bluest is a cross-platform Rust low-power Bluetooth (BLE) library. Currently supports Windows (version 10 and above), MacOS, and Linux. Android support is planned.
-
-Therefore, supported:
+Based on the Slint framework and `bluest` BLE library:
 
 - Windows 10/11
 - MacOS
@@ -245,7 +188,7 @@ Therefore, supported:
 
 ## Compatible Devices
 
-This program is compatible with any wearable device that supports the standard BLE Heart Rate Service (UUID 0x180D), including but not limited to:
+Compatible with any wearable device that supports the standard BLE Heart Rate Service (UUID 0x180D), including but not limited to:
 
 - **Xiaomi Mi Band** series (tested on Mi Band 10)
 - **Honor Band** series

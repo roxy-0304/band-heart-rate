@@ -1,3 +1,4 @@
 fn main() {
-    tauri_build::build();
+    #[cfg(feature = "gui")]
+    slint_build::compile("ui/app.slint").unwrap();
 }

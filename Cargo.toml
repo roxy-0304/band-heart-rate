@@ -1,11 +1,15 @@
 [package]
 name = "band-heart-rate"
 authors = ["Roxy"]
-version = "26.5.1"
+version = "26.6.3"
 edition = "2021"
 repository = "https://github.com/Roxy-0304/band-heart-rate"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["gui"]
+    gui = ["dep:slint", "dep:slint-build", "dep:tray-icon", "dep:muda", "dep:image", "dep:windows-sys"]
 
 [dependencies]
 tokio = { version = "1.45.1", features = ["macros", "rt-multi-thread", "signal"] }
@@ -14,7 +18,14 @@ futures-lite = "1.13.0"
 axum = { version = "0.7", features = ["macros"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tauri = { version = "2", features = ["tray-icon"] }
+slint = { version = "1", optional = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tray-icon = { version = "0.19", optional = true }
+muda = { version = "0.15", optional = true }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_UI_Shell", "Win32_System_LibraryLoader", "Win32_UI_Input_KeyboardAndMouse"], optional = true }
+anyhow = "1"
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+slint-build = { version = "1", optional = true }

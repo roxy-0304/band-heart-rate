@@ -1,12 +1,15 @@
-# Rust
+# Rust / Cargo
 target/
 gen/
-
-# Node.js
-node_modules/
-
-# Build output
+**/slint_generated*
+**/node_modules/
 dist/
+pkg/
+*.pdb
+*.exe
+*.dll
+*.so
+*.dylib
 
 # IDE
 .vscode/
@@ -19,8 +22,20 @@ dist/
 .DS_Store
 Thumbs.db
 
+# Build
+build/
+out/
+
+# Test / Coverage
+coverage/
+*.profraw
+*.profdata
+lcov.info
+tarpaulin-report.html
+
 # Logs
 *.log
+*.log.*
 
 # Environment
 .env
