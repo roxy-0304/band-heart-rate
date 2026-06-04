@@ -28,7 +28,7 @@ impl fmt::Debug for ReconnectError {
 
 impl Error for ReconnectError {}
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Default, Serialize)]
 pub struct HeartRateReading {
     pub heart_rate: u16,
     pub sensor_contact: Option<bool>,
@@ -37,18 +37,6 @@ pub struct HeartRateReading {
     /// 蓝牙任务退出时填充错误信息，前端可据此显示提示
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-}
-
-impl Default for HeartRateReading {
-    fn default() -> Self {
-        Self {
-            heart_rate: 0,
-            sensor_contact: None,
-            connected: false,
-            scanning: false,
-            error: None,
-        }
-    }
 }
 
 #[derive(Clone)]

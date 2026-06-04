@@ -1,9 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(feature = "gui")]
 mod ble;
+#[cfg(feature = "gui")]
 mod macros;
+#[cfg(feature = "gui")]
 mod server;
+#[cfg(feature = "gui")]
 mod types;
+#[cfg(feature = "gui")]
 mod web_ui;
 
 #[cfg(feature = "gui")]

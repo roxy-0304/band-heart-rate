@@ -55,12 +55,14 @@ fn parse_color(hex: &str) -> slint::Color {
 /// Create HICON from embedded PNG data, scaled to the given size
 #[cfg(target_os = "windows")]
 fn create_hicon_from_png(data: &[u8], size: u32) -> *mut std::ffi::c_void {
-    use windows_sys::Win32::UI::WindowsAndMessaging::*;
     use windows_sys::Win32::Graphics::Gdi::*;
+    use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
     unsafe {
         let img = image::load_from_memory(data).expect("Failed to load icon PNG");
-        let img = img.resize_exact(size, size, image::imageops::FilterType::Lanczos3).to_rgba8();
+        let img = img
+            .resize_exact(size, size, image::imageops::FilterType::Lanczos3)
+            .to_rgba8();
 
         let width = img.width() as i32;
         let height = img.height() as i32;
@@ -80,12 +82,24 @@ fn create_hicon_from_png(data: &[u8], size: u32) -> *mut std::ffi::c_void {
                 biClrUsed: 0,
                 biClrImportant: 0,
             },
-            bmiColors: [RGBQUAD { rgbBlue: 0, rgbGreen: 0, rgbRed: 0, rgbReserved: 0 }],
+            bmiColors: [RGBQUAD {
+                rgbBlue: 0,
+                rgbGreen: 0,
+                rgbRed: 0,
+                rgbReserved: 0,
+            }],
         };
 
         let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
         let hdc = GetDC(std::ptr::null_mut());
-        let hbitmap = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &mut bits, std::ptr::null_mut(), 0);
+        let hbitmap = CreateDIBSection(
+            hdc,
+            &bmi,
+            DIB_RGB_COLORS,
+            &mut bits,
+            std::ptr::null_mut(),
+            0,
+        );
         ReleaseDC(std::ptr::null_mut(), hdc);
 
         if hbitmap.is_null() || bits.is_null() {
@@ -128,8 +142,8 @@ fn load_tray_icon() -> anyhow::Result<tray_icon::Icon> {
 
 /// Create a hidden popup window for TrackPopupMenu ownership.
 fn create_hidden_window() -> windows_sys::Win32::Foundation::HWND {
-    use windows_sys::Win32::UI::WindowsAndMessaging::*;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
     let class_name: Vec<u16> = "BandHeartRateTray\0".encode_utf16().collect();
     unsafe {
@@ -154,7 +168,10 @@ fn create_hidden_window() -> windows_sys::Win32::Foundation::HWND {
             class_name.as_ptr(),
             std::ptr::null(),
             WS_POPUP,
-            0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
             0 as windows_sys::Win32::Foundation::HWND,
             std::ptr::null_mut(),
             h_instance,
@@ -171,8 +188,8 @@ fn create_hidden_window() -> windows_sys::Win32::Foundation::HWND {
 fn show_tray_context_menu(hwnd: windows_sys::Win32::Foundation::HWND, menu: &muda::Menu) -> u32 {
     use muda::ContextMenu;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        TrackPopupMenu, GetCursorPos, SetForegroundWindow, PostMessageW,
-        TPM_RIGHTBUTTON, TPM_BOTTOMALIGN, TPM_RETURNCMD, WM_NULL,
+        GetCursorPos, PostMessageW, SetForegroundWindow, TrackPopupMenu, TPM_BOTTOMALIGN,
+        TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_NULL,
     };
     unsafe {
         // Required before TrackPopupMenu per Microsoft docs
@@ -200,7 +217,9 @@ fn show_tray_context_menu(hwnd: windows_sys::Win32::Foundation::HWND, menu: &mud
 
 /// Pump Windows messages so tray-icon's WndProc can receive events
 fn pump_windows_messages() {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{PeekMessageW, TranslateMessage, DispatchMessageW, MSG};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, PeekMessageW, TranslateMessage, MSG,
+    };
     let mut msg: MSG = unsafe { std::mem::zeroed() };
     while unsafe { PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, 1) } != 0 {
         unsafe {
@@ -219,7 +238,12 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
 
     // Create the popup menu
     let menu = muda::Menu::new();
-    let quit_item = muda::MenuItem::with_id(MENU_QUIT, "退出", true, None::<muda::accelerator::Accelerator>);
+    let quit_item = muda::MenuItem::with_id(
+        MENU_QUIT,
+        "退出",
+        true,
+        None::<muda::accelerator::Accelerator>,
+    );
     let _ = menu.append(&quit_item);
 
     // Set window icon using PNG data converted to HICON via CreateIconIndirect
@@ -227,21 +251,26 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
     // Keep _icon_timer alive until the end of the function
     let _icon_timer = slint::Timer::default();
     let _retry_count = Rc::new(Cell::new(0u32));
+    let _icon_set = Rc::new(Cell::new(false));
     {
         let retry_count2 = _retry_count.clone();
+        let icon_set2 = _icon_set.clone();
         _icon_timer.start(
             slint::TimerMode::Repeated,
             std::time::Duration::from_millis(200),
             move || {
+                if icon_set2.get() {
+                    return; // Icon already set, skip
+                }
                 if retry_count2.get() >= 10 {
                     return; // Give up after 10 retries (2 seconds)
                 }
                 retry_count2.set(retry_count2.get() + 1);
 
                 unsafe {
-                    use windows_sys::Win32::UI::WindowsAndMessaging::*;
-                    use windows_sys::Win32::System::Threading::*;
                     use windows_sys::Win32::Foundation::*;
+                    use windows_sys::Win32::System::Threading::*;
+                    use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
                     let current_pid = GetCurrentProcessId();
 
@@ -249,20 +278,21 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
                         pid: u32,
                         hwnd: HWND,
                     }
-                    let mut data = EnumData { pid: current_pid, hwnd: std::ptr::null_mut() };
+                    let mut data = EnumData {
+                        pid: current_pid,
+                        hwnd: std::ptr::null_mut(),
+                    };
 
                     unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
                         let data = &mut *(lparam as *mut EnumData);
                         let mut pid: u32 = 0;
                         GetWindowThreadProcessId(hwnd, &mut pid);
-                        if pid == data.pid {
-                            if IsWindowVisible(hwnd) != 0 {
-                                let mut buf = [0u16; 256];
-                                let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), 256);
-                                if len > 0 {
-                                    data.hwnd = hwnd;
-                                    return 0;
-                                }
+                        if pid == data.pid && IsWindowVisible(hwnd) != 0 {
+                            let mut buf = [0u16; 256];
+                            let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), 256);
+                            if len > 0 {
+                                data.hwnd = hwnd;
+                                return 0;
                             }
                         }
                         1
@@ -271,7 +301,9 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
                     EnumWindows(Some(enum_callback), &mut data as *mut EnumData as LPARAM);
                     let hwnd = data.hwnd;
 
-                    if hwnd.is_null() { return; }
+                    if hwnd.is_null() {
+                        return;
+                    }
 
                     let icon_data = include_bytes!("../icons/icon.png");
 
@@ -283,6 +315,7 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
                     let hicon_sm = create_hicon_from_png(icon_data, 16);
                     if !hicon_sm.is_null() {
                         SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, hicon_sm as _);
+                        icon_set2.set(true); // Both icons set successfully
                     }
                 }
             },
@@ -311,7 +344,7 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
     // Stats state
     let stats_min = Rc::new(Cell::new(0u16));
     let stats_max = Rc::new(Cell::new(0u16));
-    let stats_sum = Rc::new(Cell::new(0u32));
+    let stats_sum = Rc::new(Cell::new(0u64));
     let stats_count = Rc::new(Cell::new(0u32));
 
     // Reset button handler
@@ -422,18 +455,22 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
                     if stats_count.get() == 0 {
                         stats_min.set(hr);
                         stats_max.set(hr);
-                        stats_sum.set(hr as u32);
+                        stats_sum.set(hr as u64);
                         stats_count.set(1);
                     } else {
-                        if hr < stats_min.get() { stats_min.set(hr); }
-                        if hr > stats_max.get() { stats_max.set(hr); }
-                        stats_sum.set(stats_sum.get() + hr as u32);
+                        if hr < stats_min.get() {
+                            stats_min.set(hr);
+                        }
+                        if hr > stats_max.get() {
+                            stats_max.set(hr);
+                        }
+                        stats_sum.set(stats_sum.get() + hr as u64);
                         stats_count.set(stats_count.get() + 1);
                     }
 
                     w.set_stat_min(stats_min.get().to_string().into());
                     w.set_stat_max(stats_max.get().to_string().into());
-                    let avg = stats_sum.get() / stats_count.get();
+                    let avg = (stats_sum.get() / stats_count.get() as u64) as u16;
                     w.set_stat_avg(avg.to_string().into());
                 } else if !data.connected && !data.scanning {
                     w.set_bpm_text("--".into());
@@ -491,7 +528,7 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
             while tray_icon::TrayIconEvent::receiver().try_recv().is_ok() {}
             while muda::MenuEvent::receiver().try_recv().is_ok() {}
             // Show context menu
-            let selected = show_tray_context_menu(menu_hwnd, &menu.as_ref());
+            let selected = show_tray_context_menu(menu_hwnd, menu.as_ref());
             while tray_icon::TrayIconEvent::receiver().try_recv().is_ok() {}
             if selected > 0 {
                 break;
@@ -530,7 +567,7 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
                         button_state: tray_icon::MouseButtonState::Up,
                         ..
                     } => {
-                        let selected = show_tray_context_menu(menu_hwnd, &menu.as_ref());
+                        let selected = show_tray_context_menu(menu_hwnd, menu.as_ref());
                         // TrackPopupMenu with TPM_RETURNCMD blocks until menu is closed.
                         // It returns 0 if user clicks outside (loses focus) or presses Esc.
                         // It returns the menu item ID if user selects one.

@@ -7,10 +7,6 @@ repository = "https://github.com/Roxy-0304/band-heart-rate"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[features]
-default = ["gui"]
-    gui = ["dep:slint", "dep:slint-build", "dep:tray-icon", "dep:muda", "dep:image", "dep:windows-sys"]
-
 [dependencies]
 tokio = { version = "1.45.1", features = ["macros", "rt-multi-thread", "signal"] }
 bluest = "0.6.8"
@@ -29,4 +25,9 @@ anyhow = "1"
 
 [build-dependencies]
 slint-build = { version = "1", optional = true }
-winresource = "0.1"
+winresource = { version = "0.1", optional = true }
+
+[features]
+default = ["gui"]
+gui = ["dep:slint", "dep:slint-build", "dep:tray-icon", "dep:muda", "dep:image", "dep:windows-sys"]
+windows-icon = ["dep:winresource"]

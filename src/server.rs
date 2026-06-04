@@ -1,4 +1,4 @@
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::{extract::State, routing::get, Json, Router};
 
 use crate::web_ui;
@@ -50,7 +50,7 @@ async fn heart_rate_sse(
             None
         }
     });
-    Sse::new(stream)
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 async fn index() -> axum::response::Html<&'static str> {

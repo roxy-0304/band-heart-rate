@@ -32,28 +32,26 @@ const DEFAULT_ALLOWED_KEYWORDS: &[&str] = &["band", "amazfit", "watch", "mi"];
 /// 读取允许的设备名称关键词（优先读取环境变量 MIBAND_ALLOWED_DEVICES，逗号分隔；否则使用默认列表）
 fn allowed_keywords() -> &'static [String] {
     static KEYWORDS: OnceLock<Vec<String>> = OnceLock::new();
-    KEYWORDS.get_or_init(|| {
-        match std::env::var("MIBAND_ALLOWED_DEVICES") {
-            Ok(val) => {
-                let keywords: Vec<String> = val
-                    .split(',')
-                    .map(|s| s.trim().to_lowercase())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                if keywords.is_empty() {
-                    DEFAULT_ALLOWED_KEYWORDS
-                        .iter()
-                        .map(|s| s.to_lowercase())
-                        .collect()
-                } else {
-                    keywords
-                }
+    KEYWORDS.get_or_init(|| match std::env::var("MIBAND_ALLOWED_DEVICES") {
+        Ok(val) => {
+            let keywords: Vec<String> = val
+                .split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if keywords.is_empty() {
+                DEFAULT_ALLOWED_KEYWORDS
+                    .iter()
+                    .map(|s| s.to_lowercase())
+                    .collect()
+            } else {
+                keywords
             }
-            Err(_) => DEFAULT_ALLOWED_KEYWORDS
-                .iter()
-                .map(|s| s.to_lowercase())
-                .collect(),
         }
+        Err(_) => DEFAULT_ALLOWED_KEYWORDS
+            .iter()
+            .map(|s| s.to_lowercase())
+            .collect(),
     })
 }
 
@@ -133,10 +131,7 @@ impl BleSession {
 // ===== 公开入口 =====
 
 /// 蓝牙主循环：扫描、连接、重连
-pub async fn run_loop(
-    adapter: Adapter,
-    tx: watch::Sender<HeartRateReading>,
-) -> anyhow::Result<()> {
+pub async fn run_loop(adapter: Adapter, tx: watch::Sender<HeartRateReading>) -> anyhow::Result<()> {
     let mut session = BleSession::new();
 
     loop {
@@ -150,10 +145,7 @@ pub async fn run_loop(
 
         if is_reconnecting {
             session.reconnect_attempts += 1;
-            printfl_inline!(
-                "[重连 #{}] 正在扫描设备...",
-                session.reconnect_attempts
-            );
+            printfl_inline!("[重连 #{}] 正在扫描设备...", session.reconnect_attempts);
         } else {
             session.reconnect_attempts = 0;
             tracing::info!("正在扫描设备...");
@@ -185,14 +177,15 @@ pub async fn run_loop(
 
         let mut connected_this_round = false;
         for device in known_devices.iter().chain(other_devices.iter()) {
+            let device_id = device.id().to_string();
             let device_name = device.name_async().await.ok();
-            if !session.known_ids.contains(&device.id().to_string())
+            if !session.known_ids.contains(&device_id)
                 && !device_name_allowed(device_name.as_deref(), keywords)
             {
                 if !is_reconnecting {
                     tracing::debug!(
                         "跳过设备 [{}] {:?}: 不在允许关键词列表中",
-                        device.id(),
+                        device_id,
                         device_name
                     );
                 }
@@ -202,18 +195,18 @@ pub async fn run_loop(
                 printfl_inline!(
                     "[重连 #{}] 正在连接设备 {}...",
                     session.reconnect_attempts,
-                    device.id()
+                    device_id
                 );
             }
             match handle_device(&adapter, device, tx.clone()).await {
                 Ok(()) => {
-                    session.mark_connected(device.id().to_string());
+                    session.mark_connected(device_id);
                     connected_this_round = true;
                     break;
                 }
                 Err(err) => {
                     if err.downcast_ref::<ReconnectError>().is_some() {
-                        session.mark_disconnected(device.id().to_string());
+                        session.mark_disconnected(device_id);
                         connected_this_round = true;
                         continue;
                     }
@@ -253,11 +246,7 @@ pub async fn run_loop(
             session.reconnect_attempts = 0;
             tracing::info!("所有设备忙碌或不可达，进入轻量轮询模式...");
 
-            if let Err(err) =
-                poll_for_available_device(&adapter, tx.clone(), &session.known_ids).await
-            {
-                return Err(err);
-            }
+            poll_for_available_device(&adapter, tx.clone(), &session.known_ids).await?;
             session.disconnect_time = None;
             continue;
         }
@@ -431,10 +420,7 @@ async fn poll_for_available_device(
             {
                 continue;
             }
-            printfl_inline!(
-                "[轮询 #{poll_count}] 尝试连接设备 {}...",
-                device.id()
-            );
+            printfl_inline!("[轮询 #{poll_count}] 尝试连接设备 {}...", device.id());
             match handle_device(adapter, device, tx.clone()).await {
                 Ok(()) => {
                     tracing::info!("[✓] 轮询成功，已连接设备 {}", device.id());
@@ -552,8 +538,13 @@ async fn handle_device(
             }
             Ok(None) => {
                 tracing::info!("心率通知已停止");
-                return cleanup_and_disconnect(adapter, device, tx, ReconnectError::StoppedBroadcasting)
-                    .await;
+                return cleanup_and_disconnect(
+                    adapter,
+                    device,
+                    tx,
+                    ReconnectError::StoppedBroadcasting,
+                )
+                .await;
             }
             Err(_) => break,
         }
@@ -582,10 +573,7 @@ fn parse_heart_rate(data: &[u8]) -> Option<(u16, Option<bool>)> {
     let hr_byte_count = if hr_is_16bit { 3 } else { 2 };
 
     if data.len() < hr_byte_count {
-        tracing::warn!(
-            "心率数据包过短: {} 字节 (需要 {hr_byte_count})",
-            data.len()
-        );
+        tracing::warn!("心率数据包过短: {} 字节 (需要 {hr_byte_count})", data.len());
         return None;
     }
 
