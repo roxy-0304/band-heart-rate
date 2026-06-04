@@ -1,7 +1,11 @@
 export component MainWindow inherits Window {
     title: "Band Heart Rate Monitor";
-    preferred-width: 600px;
-    preferred-height: 750px;
+    min-width: 380px;
+    max-width: 380px;
+    min-height: 480px;
+    max-height: 480px;
+    preferred-width: 380px;
+    preferred-height: 480px;
     background: #0a0e16;
 
     // External properties set from Rust
@@ -14,175 +18,250 @@ export component MainWindow inherits Window {
     in property <string> stat-min: "--";
     in property <string> stat-max: "--";
     in property <string> stat-avg: "--";
-    in property <bool> heart-beating: false;
-
     // Callbacks
     callback reset-stats();
 
+    // 主内容区域
     VerticalLayout {
-        padding: 24px;
+        padding: 16px;
         spacing: 0px;
 
-        // === Status Bar ===
+        // === 状态栏 (参考设计：左侧状态点+文字，中间标题) ===
         HorizontalLayout {
             padding-bottom: 16px;
-            spacing: 8px;
-            alignment: start;
+            spacing: 0px;
+            alignment: space-between;
 
-            status-dot := Rectangle {
-                width: 8px;
-                height: 8px;
-                border-radius: 4px;
-                background: root.status-color;
-            }
+            // 左侧：连接状态
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                width: 100px;
 
-            Text {
-                text: root.status-text;
-                font-size: 12px;
-                font-weight: 600;
-                color: root.status-color;
-                vertical-alignment: center;
-            }
-        }
-
-        // === Hero Section (flexible) ===
-        VerticalLayout {
-            alignment: center;
-            spacing: 4px;
-
-            // Heart icon
-            Text {
-                text: "♥";
-                font-size: 64px;
-                color: #ef4444;
-                horizontal-alignment: center;
-                opacity: root.heart-beating ? 1.0 : 0.3;
-            }
-
-            // BPM number
-            Text {
-                text: root.bpm-text;
-                font-size: 128px;
-                font-weight: 700;
-                color: #e0e3e8;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-
-            // BPM label
-            Text {
-                text: "BPM";
-                font-size: 20px;
-                font-weight: 300;
-                color: #8b949e;
-                horizontal-alignment: center;
-            }
-
-            // Zone badge
-            Rectangle {
-                height: 32px;
-                border-radius: 16px;
-                background: root.zone-bg-color;
+                status-dot := Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: root.status-color;
+                    opacity: root.status-color == #4ade80 ? 1.0 : 0.8;
+                }
 
                 Text {
-                    text: root.zone-label;
-                    font-size: 14px;
-                    font-weight: 700;
-                    color: root.zone-color;
-                    horizontal-alignment: center;
+                    text: root.status-text;
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: root.status-color;
                     vertical-alignment: center;
                 }
             }
+
+            // 中间：标题
+            Text {
+                text: "Band Heart Rate Monitor";
+                font-size: 12px;
+                font-weight: 700;
+                color: #9ca3af;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                letter-spacing: 0.5px;
+            }
+
+            // 右侧占位
+            Rectangle {
+                width: 100px;
+            }
         }
 
-        // === Stats Bar ===
+        // === 心率主显示区 (hero-section 居中布局) ===
         Rectangle {
-            height: 1px;
-            background: #8b949e;
-            opacity: 0.12;
+            border-radius: 16px;
+            background: #111827;
+            border-width: 1px;
+            border-color: #1f2937;
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 8px;
+                alignment: center;
+
+                // BPM 数字 - 主要焦点
+                Text {
+                    text: root.bpm-text;
+                    font-size: 96px;
+                    font-weight: 900;
+                    color: #ffffff;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    letter-spacing: -2px;
+                    font-family: "MiSans VF";
+                }
+
+                // BPM 标签
+                Text {
+                    text: "BPM";
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: #6b7280;
+                    horizontal-alignment: center;
+                    letter-spacing: 3px;
+                }
+
+                // 间距
+                Rectangle {
+                    height: 8px;
+                }
+
+                // 心率区间标签 - 圆角胶囊设计
+                Rectangle {
+                    height: 28px;
+                    border-radius: 14px;
+                    background: root.zone-bg-color;
+                    border-width: 1px;
+                    border-color: root.zone-color;
+                    horizontal-stretch: 0;
+
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 6px;
+                        alignment: center;
+
+                        Text {
+                            text: "心率区间";
+                            font-size: 10px;
+                            font-weight: 500;
+                            color: #9ca3af;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            text: root.zone-label;
+                            font-size: 12px;
+                            font-weight: 700;
+                            color: root.zone-color;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
         }
 
-        HorizontalLayout {
-            padding-top: 16px;
-            padding-bottom: 12px;
+        // 间距
+        Rectangle {
+            height: 12px;
+        }
 
-            // Min
-            VerticalLayout {
-                alignment: center;
-                Text {
-                    text: "最低";
-                    font-size: 11px;
-                    font-weight: 600;
-                    color: #8b949e;
-                    horizontal-alignment: center;
-                }
-                Text {
-                    text: root.stat-min;
-                    font-size: 28px;
-                    font-weight: 700;
-                    color: #4fc3f7;
-                    horizontal-alignment: center;
-                }
-            }
+        // === 统计区 (参考设计：简洁横向统计栏) ===
+        Rectangle {
+            height: 72px;
+            border-radius: 12px;
+            background: #111827;
+            border-width: 1px;
+            border-color: #1f2937;
 
-            // Max
-            VerticalLayout {
-                alignment: center;
-                Text {
-                    text: "最高";
-                    font-size: 11px;
-                    font-weight: 600;
-                    color: #8b949e;
-                    horizontal-alignment: center;
-                }
-                Text {
-                    text: root.stat-max;
-                    font-size: 28px;
-                    font-weight: 700;
-                    color: #ef5350;
-                    horizontal-alignment: center;
-                }
-            }
+            HorizontalLayout {
+                padding: 14px;
+                spacing: 0px;
 
-            // Avg
-            VerticalLayout {
-                alignment: center;
-                Text {
-                    text: "平均";
-                    font-size: 11px;
-                    font-weight: 600;
-                    color: #8b949e;
-                    horizontal-alignment: center;
+                // 最低心率
+                Rectangle {
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        spacing: 6px;
+                        alignment: center;
+
+                        Text {
+                            text: "最低";
+                            font-size: 10px;
+                            font-weight: 600;
+                            color: #6b7280;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: root.stat-min;
+                            font-size: 24px;
+                            font-weight: 700;
+                            color: #38bdf8;
+                            horizontal-alignment: center;
+                        }
+                    }
                 }
-                Text {
-                    text: root.stat-avg;
-                    font-size: 28px;
-                    font-weight: 700;
-                    color: #e0e3e8;
-                    horizontal-alignment: center;
+
+                // 最高心率
+                Rectangle {
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        spacing: 6px;
+                        alignment: center;
+
+                        Text {
+                            text: "最高";
+                            font-size: 10px;
+                            font-weight: 600;
+                            color: #6b7280;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: root.stat-max;
+                            font-size: 24px;
+                            font-weight: 700;
+                            color: #f472b6;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                // 平均心率
+                Rectangle {
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        spacing: 6px;
+                        alignment: center;
+
+                        Text {
+                            text: "平均";
+                            font-size: 10px;
+                            font-weight: 600;
+                            color: #6b7280;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: root.stat-avg;
+                            font-size: 24px;
+                            font-weight: 700;
+                            color: #a78bfa;
+                            horizontal-alignment: center;
+                        }
+                    }
                 }
             }
         }
 
-        // === Reset Button ===
+        // === 重置按钮 ===
         HorizontalLayout {
             alignment: center;
-            padding-top: 4px;
+            padding-top: 14px;
 
-            Rectangle {
-                width: 120px;
+            reset-btn := Rectangle {
+                width: 130px;
                 height: 36px;
-                border-radius: 8px;
-                background: #8b949e;
-                opacity: 0.1;
+                border-radius: 10px;
+                background: #1f2937;
                 border-width: 1px;
-                border-color: #8b949e;
+                border-color: #374151;
 
                 Text {
                     text: "↻ 重置统计";
-                    font-size: 13px;
+                    font-size: 12px;
                     font-weight: 600;
-                    color: #8b949e;
+                    color: #d1d5db;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }

@@ -40,3 +40,8 @@ tarpaulin-report.html
 # Environment
 .env
 .env.local
+
+# Release artifacts
+*.msi
+*.wixobj
+*.wixpdb

@@ -12,30 +12,31 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-        cache: 'npm'
-        cache-dependency-path: frontend/package-lock.json
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
 
-    - name: Build frontend
-      run: |
-        cd frontend
-        npm ci
-        npm run build
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
 
-    - name: Install Rust
-      run: |
-        rustup toolchain install stable
-        rustup target add x86_64-pc-windows-msvc
+      - name: Build
+        run: cargo build --release
 
-    - name: Build
-      run: cargo build --release
+      - name: Get version
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
-    - name: Upload Release Asset
-      uses: softprops/action-gh-release@v2
-      with:
-        files: target/release/band-heart-rate.exe
-        token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rename artifact
+        shell: powershell
+        run: |
+          Copy-Item "target/release/band-heart-rate.exe" -Destination "band-heart-rate-${{ steps.version.outputs.version }}-windows-x64.exe"
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: band-heart-rate-${{ steps.version.outputs.version }}-windows-x64.exe
+          token: ${{ secrets.GITHUB_TOKEN }}

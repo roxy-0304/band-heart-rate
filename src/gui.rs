@@ -52,6 +52,71 @@ fn parse_color(hex: &str) -> slint::Color {
     slint::Color::from_rgb_u8(r, g, b)
 }
 
+/// Create HICON from embedded PNG data, scaled to the given size
+#[cfg(target_os = "windows")]
+fn create_hicon_from_png(data: &[u8], size: u32) -> *mut std::ffi::c_void {
+    use windows_sys::Win32::UI::WindowsAndMessaging::*;
+    use windows_sys::Win32::Graphics::Gdi::*;
+
+    unsafe {
+        let img = image::load_from_memory(data).expect("Failed to load icon PNG");
+        let img = img.resize_exact(size, size, image::imageops::FilterType::Lanczos3).to_rgba8();
+
+        let width = img.width() as i32;
+        let height = img.height() as i32;
+        let rgba = img.as_raw();
+
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: 0,
+                biSizeImage: (width * height * 4) as u32,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            bmiColors: [RGBQUAD { rgbBlue: 0, rgbGreen: 0, rgbRed: 0, rgbReserved: 0 }],
+        };
+
+        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+        let hdc = GetDC(std::ptr::null_mut());
+        let hbitmap = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &mut bits, std::ptr::null_mut(), 0);
+        ReleaseDC(std::ptr::null_mut(), hdc);
+
+        if hbitmap.is_null() || bits.is_null() {
+            return std::ptr::null_mut();
+        }
+
+        let dst = bits as *mut u8;
+        for i in 0..(width * height) as usize {
+            let src = &rgba[i * 4..];
+            *dst.add(i * 4) = src[2];
+            *dst.add(i * 4 + 1) = src[1];
+            *dst.add(i * 4 + 2) = src[0];
+            *dst.add(i * 4 + 3) = src[3];
+        }
+
+        let hmask = CreateBitmap(width, height, 1, 1, std::ptr::null_mut());
+
+        let mut icon_info = std::mem::zeroed::<ICONINFO>();
+        icon_info.fIcon = 1;
+        icon_info.hbmColor = hbitmap;
+        icon_info.hbmMask = hmask;
+
+        let hicon = CreateIconIndirect(&icon_info);
+
+        DeleteObject(hbitmap);
+        DeleteObject(hmask);
+
+        hicon
+    }
+}
+
 /// Load embedded icon PNG as tray_icon::Icon
 fn load_tray_icon() -> anyhow::Result<tray_icon::Icon> {
     let rgba = image::load_from_memory(include_bytes!("../icons/icon.png"))
@@ -157,6 +222,73 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
     let quit_item = muda::MenuItem::with_id(MENU_QUIT, "退出", true, None::<muda::accelerator::Accelerator>);
     let _ = menu.append(&quit_item);
 
+    // Set window icon using PNG data converted to HICON via CreateIconIndirect
+    // Use EnumWindows + process ID to find the Slint window handle reliably
+    // Keep _icon_timer alive until the end of the function
+    let _icon_timer = slint::Timer::default();
+    let _retry_count = Rc::new(Cell::new(0u32));
+    {
+        let retry_count2 = _retry_count.clone();
+        _icon_timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(200),
+            move || {
+                if retry_count2.get() >= 10 {
+                    return; // Give up after 10 retries (2 seconds)
+                }
+                retry_count2.set(retry_count2.get() + 1);
+
+                unsafe {
+                    use windows_sys::Win32::UI::WindowsAndMessaging::*;
+                    use windows_sys::Win32::System::Threading::*;
+                    use windows_sys::Win32::Foundation::*;
+
+                    let current_pid = GetCurrentProcessId();
+
+                    struct EnumData {
+                        pid: u32,
+                        hwnd: HWND,
+                    }
+                    let mut data = EnumData { pid: current_pid, hwnd: std::ptr::null_mut() };
+
+                    unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+                        let data = &mut *(lparam as *mut EnumData);
+                        let mut pid: u32 = 0;
+                        GetWindowThreadProcessId(hwnd, &mut pid);
+                        if pid == data.pid {
+                            if IsWindowVisible(hwnd) != 0 {
+                                let mut buf = [0u16; 256];
+                                let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), 256);
+                                if len > 0 {
+                                    data.hwnd = hwnd;
+                                    return 0;
+                                }
+                            }
+                        }
+                        1
+                    }
+
+                    EnumWindows(Some(enum_callback), &mut data as *mut EnumData as LPARAM);
+                    let hwnd = data.hwnd;
+
+                    if hwnd.is_null() { return; }
+
+                    let icon_data = include_bytes!("../icons/icon.png");
+
+                    let hicon_big = create_hicon_from_png(icon_data, 48);
+                    if !hicon_big.is_null() {
+                        SendMessageW(hwnd, WM_SETICON, ICON_BIG as usize, hicon_big as _);
+                    }
+
+                    let hicon_sm = create_hicon_from_png(icon_data, 16);
+                    if !hicon_sm.is_null() {
+                        SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, hicon_sm as _);
+                    }
+                }
+            },
+        );
+    }
+
     // Set up system tray — NO .with_menu(), handle right-click manually
     let icon = load_tray_icon().ok();
     let _tray = icon.and_then(|icon| {
@@ -202,7 +334,6 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
                 w.set_zone_label("--".into());
                 w.set_zone_color(parse_color("#4A4F58"));
                 w.set_zone_bg_color(zone_bg_color("#4A4F58"));
-                w.set_heart_beating(false);
             }
         });
     }
@@ -211,7 +342,23 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
     let window_weak = window.as_weak();
     let rx = rx.clone();
 
+    // Cache previous values to avoid unnecessary UI updates (causes flickering)
+    let prev_hr = Rc::new(Cell::new(0u16));
+    let prev_status = Rc::new(Cell::new(0u8)); // 0: disconnected, 1: scanning, 2: connected, 3: error
+
+    // Flag to signal quit from tray menu (shared between tray timer and main loop)
+    let should_quit_flag = Rc::new(Cell::new(false));
+    // Flag to signal right-click on tray while window was visible
+    let right_click_pending = Rc::new(Cell::new(false));
+
     let _timer = slint::Timer::default();
+    let prev_hr_clone = prev_hr.clone();
+    let prev_status_clone = prev_status.clone();
+
+    // Share menu with tray timer via Rc
+    let menu = Rc::new(menu);
+    let right_click_pending2 = right_click_pending.clone();
+
     _timer.start(
         slint::TimerMode::Repeated,
         std::time::Duration::from_millis(100),
@@ -223,56 +370,102 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
                 return;
             };
 
-            // Status
-            if let Some(ref err) = data.error {
-                w.set_status_text(format!("错误: {err}").into());
-                w.set_status_color(parse_color("#EF4444"));
+            // Status - only update if changed
+            let new_status = if data.error.is_some() {
+                3
             } else if data.connected {
-                w.set_status_text("已连接".into());
-                w.set_status_color(parse_color("#4ADE80"));
+                2
             } else if data.scanning {
-                w.set_status_text("扫描中...".into());
-                w.set_status_color(parse_color("#FBBF24"));
+                1
             } else {
-                w.set_status_text("断开连接".into());
-                w.set_status_color(parse_color("#EF4444"));
+                0
+            };
+
+            if prev_status_clone.get() != new_status {
+                prev_status_clone.set(new_status);
+                if let Some(ref err) = data.error {
+                    w.set_status_text(format!("错误: {err}").into());
+                    w.set_status_color(parse_color("#EF4444"));
+                } else if data.connected {
+                    w.set_status_text("已连接".into());
+                    w.set_status_color(parse_color("#4ADE80"));
+                } else if data.scanning {
+                    w.set_status_text("扫描中...".into());
+                    w.set_status_color(parse_color("#FBBF24"));
+                } else {
+                    w.set_status_text("断开连接".into());
+                    w.set_status_color(parse_color("#EF4444"));
+                }
             }
 
-            // Heart rate
-            if data.connected && data.heart_rate > 0 {
-                w.set_bpm_text(data.heart_rate.to_string().into());
-                w.set_heart_beating(true);
+            // Heart rate - only update if changed
+            let new_hr = if data.connected && data.heart_rate > 0 {
+                data.heart_rate
+            } else {
+                0
+            };
 
-                // Zone
-                let (zone_label, zone_color) = get_zone(data.heart_rate);
-                w.set_zone_label(zone_label.into());
-                w.set_zone_color(parse_color(zone_color));
-                w.set_zone_bg_color(zone_bg_color(zone_color));
+            if prev_hr_clone.get() != new_hr {
+                prev_hr_clone.set(new_hr);
 
-                // Stats
-                let hr = data.heart_rate;
-                if stats_count.get() == 0 {
-                    stats_min.set(hr);
-                    stats_max.set(hr);
-                    stats_sum.set(hr as u32);
-                    stats_count.set(1);
-                } else {
-                    if hr < stats_min.get() { stats_min.set(hr); }
-                    if hr > stats_max.get() { stats_max.set(hr); }
-                    stats_sum.set(stats_sum.get() + hr as u32);
-                    stats_count.set(stats_count.get() + 1);
+                if new_hr > 0 {
+                    w.set_bpm_text(new_hr.to_string().into());
+
+                    // Zone
+                    let (zone_label, zone_color) = get_zone(new_hr);
+                    w.set_zone_label(zone_label.into());
+                    w.set_zone_color(parse_color(zone_color));
+                    w.set_zone_bg_color(zone_bg_color(zone_color));
+
+                    // Stats
+                    let hr = new_hr;
+                    if stats_count.get() == 0 {
+                        stats_min.set(hr);
+                        stats_max.set(hr);
+                        stats_sum.set(hr as u32);
+                        stats_count.set(1);
+                    } else {
+                        if hr < stats_min.get() { stats_min.set(hr); }
+                        if hr > stats_max.get() { stats_max.set(hr); }
+                        stats_sum.set(stats_sum.get() + hr as u32);
+                        stats_count.set(stats_count.get() + 1);
+                    }
+
+                    w.set_stat_min(stats_min.get().to_string().into());
+                    w.set_stat_max(stats_max.get().to_string().into());
+                    let avg = stats_sum.get() / stats_count.get();
+                    w.set_stat_avg(avg.to_string().into());
+                } else if !data.connected && !data.scanning {
+                    w.set_bpm_text("--".into());
+                    w.set_zone_label("--".into());
+                    w.set_zone_color(parse_color("#4A4F58"));
+                    w.set_zone_bg_color(zone_bg_color("#4A4F58"));
                 }
+            }
 
-                w.set_stat_min(stats_min.get().to_string().into());
-                w.set_stat_max(stats_max.get().to_string().into());
-                let avg = stats_sum.get() / stats_count.get();
-                w.set_stat_avg(avg.to_string().into());
-            } else if !data.connected && !data.scanning {
-                w.set_bpm_text("--".into());
-                w.set_zone_label("--".into());
-                w.set_zone_color(parse_color("#4A4F58"));
-                w.set_zone_bg_color(zone_bg_color("#4A4F58"));
-                w.set_heart_beating(false);
+            // Non-blocking tray event drain while window is visible
+            while let Ok(event) = tray_icon::TrayIconEvent::receiver().try_recv() {
+                match event {
+                    tray_icon::TrayIconEvent::Click {
+                        button: tray_icon::MouseButton::Left,
+                        button_state: tray_icon::MouseButtonState::Up,
+                        ..
+                    } => {
+                        // Bring to foreground if already visible
+                        let _ = w.window().show();
+                    }
+                    tray_icon::TrayIconEvent::Click {
+                        button: tray_icon::MouseButton::Right,
+                        button_state: tray_icon::MouseButtonState::Up,
+                        ..
+                    } => {
+                        // Signal right-click pending and hide window
+                        // Main loop will show the context menu after window.run() returns
+                        right_click_pending2.set(true);
+                        let _ = w.window().hide();
+                    }
+                    _ => {}
+                }
             }
         },
     );
@@ -283,7 +476,33 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
     while !should_quit {
         window.run()?;
 
+        // Check if quit was requested via tray menu while window was visible
+        if should_quit_flag.get() {
+            break;
+        }
+
         // window.run() returned — window was hidden via HideWindow
+
+        // Check if a right-click was requested while window was visible
+        if right_click_pending.get() {
+            right_click_pending.set(false);
+            // Drain the event queue first
+            pump_windows_messages();
+            while tray_icon::TrayIconEvent::receiver().try_recv().is_ok() {}
+            while muda::MenuEvent::receiver().try_recv().is_ok() {}
+            // Show context menu
+            let selected = show_tray_context_menu(menu_hwnd, &menu.as_ref());
+            while tray_icon::TrayIconEvent::receiver().try_recv().is_ok() {}
+            if selected > 0 {
+                break;
+            }
+            // Re-show window after menu dismissed
+            if !should_quit_flag.get() {
+                let _ = window.window().show();
+                continue;
+            }
+        }
+
         // Wait briefly and flush any residual events
         std::thread::sleep(std::time::Duration::from_millis(300));
         pump_windows_messages();
@@ -311,7 +530,7 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
                         button_state: tray_icon::MouseButtonState::Up,
                         ..
                     } => {
-                        let selected = show_tray_context_menu(menu_hwnd, &menu);
+                        let selected = show_tray_context_menu(menu_hwnd, &menu.as_ref());
                         // TrackPopupMenu with TPM_RETURNCMD blocks until menu is closed.
                         // It returns 0 if user clicks outside (loses focus) or presses Esc.
                         // It returns the menu item ID if user selects one.
