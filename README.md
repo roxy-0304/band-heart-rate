@@ -23,7 +23,7 @@
 - **实时统计** — 最低/最高/平均心率，支持一键重置
 - **HTTP API** — REST 接口 + SSE 实时推送
 - **自动重连** — 断开后自动扫描重连，指数退避
-- **跨平台** — Windows / macOS / Linux
+- **原生 Windows 支持** — macOS / Linux 需自行添加平台依赖
 
 ## 快速开始
 
@@ -45,6 +45,8 @@ cargo build --release --no-default-features
 ```
 
 **环境要求：** [Rust 工具链](https://www.rust-lang.org/tools/install)（推荐 rustup）
+
+> 💡 **macOS / Linux 用户注意：** GUI 版本主要面向 Windows。非 GUI 模式（`cargo build --release --no-default-features`）在各平台均可编译。若在 macOS/Linux 上编译 GUI 版本，需自行安装平台相关系统依赖（如 `libdbus-1-dev`、`pkg-config`、`libwebkit2gtk-4.1-dev` 等）。
 
 ## 使用指南
 
@@ -71,7 +73,7 @@ cargo build --release --no-default-features
 
 ## 兼容设备
 
-兼容任何支持标准 BLE 心率服务（UUID 0x180D）的穿戴设备，已在 Windows 10/11、macOS、Linux 上测试。
+兼容任何支持标准 BLE 心率服务（UUID 0x180D）的穿戴设备。GUI 版本主要在 Windows 10/11 上测试，非 GUI 模式支持所有平台。
 
 支持的设备包括：小米手环、荣耀手环、华为手环/手表、Amazfit、Apple Watch 等。在设备设置中开启"心率广播"即可被识别。
 

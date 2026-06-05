@@ -23,7 +23,7 @@ You need to enable the heart rate broadcast function in your wearable device's s
 - **Live Statistics** — Min/Max/Average heart rate with one-click reset
 - **HTTP API** — REST endpoints + SSE real-time push
 - **Auto Reconnect** — Automatic scan and reconnect with exponential backoff
-- **Cross-platform** — Windows / macOS / Linux
+- **Native Windows support** — macOS / Linux require additional platform dependencies
 
 ## Quick Start
 
@@ -45,6 +45,8 @@ cargo build --release --no-default-features
 ```
 
 **Requirements:** [Rust toolchain](https://www.rust-lang.org/tools/install) (rustup recommended)
+
+> 💡 **macOS / Linux users:** The GUI version primarily targets Windows. The headless mode (`cargo build --release --no-default-features`) compiles on all platforms. To build the GUI version on macOS/Linux, you need to install platform-specific system dependencies (e.g., `libdbus-1-dev`, `pkg-config`, `libwebkit2gtk-4.1-dev`, etc.).
 
 ## Usage
 
@@ -71,7 +73,7 @@ Default address: `http://127.0.0.1:3030` (random port if occupied).
 
 ## Compatible Devices
 
-Compatible with any wearable device that supports the standard BLE Heart Rate Service (UUID 0x180D). Tested on Windows 10/11, macOS, and Linux.
+Compatible with any wearable device that supports the standard BLE Heart Rate Service (UUID 0x180D). The GUI version is primarily tested on Windows 10/11; the headless mode supports all platforms.
 
 Supported devices include: Xiaomi Mi Band, Honor Band, Huawei Band/Watch, Amazfit, Apple Watch, and more. Enable "Heart Rate Broadcast" in your device settings to be detected.
 

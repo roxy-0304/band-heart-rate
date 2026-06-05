@@ -115,6 +115,10 @@ fn create_hicon_from_png(data: &[u8], size: u32) -> *mut std::ffi::c_void {
         }
 
         let hmask = CreateBitmap(width, height, 1, 1, std::ptr::null_mut());
+        if hmask.is_null() {
+            DeleteObject(hbitmap);
+            return std::ptr::null_mut();
+        }
 
         let mut icon_info = std::mem::zeroed::<ICONINFO>();
         icon_info.fIcon = 1;
@@ -161,7 +165,7 @@ fn create_hidden_window() -> windows_sys::Win32::Foundation::HWND {
             lpszClassName: class_name.as_ptr(),
             hIconSm: std::ptr::null_mut(),
         };
-        RegisterClassExW(&wnd_class);
+        RegisterClassExW(&wnd_class); // may fail if already registered, which is fine
         CreateWindowExW(
             WS_EX_TOOLWINDOW,
             class_name.as_ptr(),
@@ -378,8 +382,6 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
     let prev_hr = Rc::new(Cell::new(0u16));
     let prev_status = Rc::new(Cell::new(0u8)); // 0: disconnected, 1: scanning, 2: connected, 3: error
 
-    // Flag to signal quit from tray menu (shared between tray timer and main loop)
-    let should_quit_flag = Rc::new(Cell::new(false));
     // Flag to signal right-click on tray while window was visible
     let right_click_pending = Rc::new(Cell::new(false));
 
@@ -512,11 +514,6 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
     while !should_quit {
         window.run()?;
 
-        // Check if quit was requested via tray menu while window was visible
-        if should_quit_flag.get() {
-            break;
-        }
-
         // window.run() returned — window was hidden via HideWindow
 
         // Check if a right-click was requested while window was visible
@@ -533,10 +530,8 @@ pub fn run(rx: watch::Receiver<HeartRateReading>) -> anyhow::Result<()> {
                 break;
             }
             // Re-show window after menu dismissed
-            if !should_quit_flag.get() {
-                let _ = window.window().show();
-                continue;
-            }
+            let _ = window.window().show();
+            continue;
         }
 
         // Wait briefly and flush any residual events
