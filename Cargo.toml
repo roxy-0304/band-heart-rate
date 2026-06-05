@@ -25,9 +25,8 @@ anyhow = "1"
 
 [build-dependencies]
 slint-build = { version = "1", optional = true }
-winresource = { version = "0.1", optional = true }
+winresource = "0.1"
 
 [features]
 default = ["gui"]
 gui = ["dep:slint", "dep:slint-build", "dep:tray-icon", "dep:muda", "dep:image", "dep:windows-sys"]
-windows-icon = ["dep:winresource"]

@@ -53,7 +53,6 @@ fn parse_color(hex: &str) -> slint::Color {
 }
 
 /// Create HICON from embedded PNG data, scaled to the given size
-#[cfg(target_os = "windows")]
 fn create_hicon_from_png(data: &[u8], size: u32) -> *mut std::ffi::c_void {
     use windows_sys::Win32::Graphics::Gdi::*;
     use windows_sys::Win32::UI::WindowsAndMessaging::*;

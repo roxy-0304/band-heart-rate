@@ -3,7 +3,7 @@ fn main() {
     slint_build::compile("ui/app.slint").unwrap();
 
     // Embed application icon for Windows (taskbar, Alt+Tab, title bar)
-    #[cfg(feature = "windows-icon")]
+    #[cfg(windows)]
     {
         let mut res = winresource::WindowsResource::new();
         res.set_icon("icons/icon.ico");
